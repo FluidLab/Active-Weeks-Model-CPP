@@ -49,7 +49,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
             if (!((disk_j==disk_i) || (distances(disk_i,disk_j)/sigma)>std::pow(2,1.0/6.0))) {
                 // no contribution to the force for self-interactions, or if the disks are outside range of the WCA potential
                 sum_grad_Ux += -4*int_strength*(-(12/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),12) \
-                +(6/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),6))*((x(disk_j)-x(disk_i))/distances(disk_i,disk_j)); // minus sign here is because my gradient calculates force FROM disk_i TO disk_j, and I need to add opposite
+                +(6/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),6))*((x(disk_j)-x(disk_i))/distances(disk_i,disk_j)); // minus sign out front is because my gradient calculates force FROM disk_i TO disk_j, and I need to add opposite
                 sum_grad_Uy += -4*int_strength*(-(12/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),12) \
                 +(6/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),6))*((y(disk_j)-y(disk_i))/distances(disk_i,disk_j));
             }
@@ -60,7 +60,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
             double wall_xdist = (sigma/2+R)*x(disk_i)/r(disk_i);
             double wall_ydist = (sigma/2+R)*y(disk_i)/r(disk_i);
             sum_grad_Ux += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
-            +(6/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),6))*((wall_xdist-x(disk_i))/wall_dist(disk_i)); // minus sign here is because my gradient calculates force FROM disk_i TO wall
+            +(6/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),6))*((wall_xdist-x(disk_i))/wall_dist(disk_i)); // minus sign out front is because my gradient calculates force FROM disk_i TO wall
             sum_grad_Uy += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
             +(6/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),6))*((wall_ydist-y(disk_i))/wall_dist(disk_i));
         }
@@ -105,15 +105,6 @@ MatrixXd Generate_Sk(int N, std::string IntegrationType = "I") {
             }
         }
     }
-
-    // int Sk = 0; // Stratonovich integration sets Sk=0 always
-    // if (IntegrationType == "I") {
-    //     // Generate a random number
-    //     double rand_num = uni_dist(gen);
-            
-    //     // Assign 1 or -1 based on the probability
-    //     Sk = (rand_num < 0.5) ? 1 : -1;
-    // }
     return Sk;  
 }
 
@@ -260,7 +251,7 @@ int main() {
     std::cout << initial_state << std::endl;
 
     // Test integration scheme with normal Brownian motion, save data
-    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 100, pow(10,5), 1, 40, 0.5, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,integration type)  
+    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 1000, pow(10,6), 1, 40, 0.5, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,integration type)  
 
     // std::cout << "Number of disks: " << brownian.size() << std::endl;
     // std::cout << "Tuple size of each disk's vector:" << std::endl;
