@@ -70,39 +70,13 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
     return forces;
 }
 
-// Function to compute the phi values at all nsamp times for all N disks
-MatrixXd phi_active(MatrixXd X, double f, double Tmax, int nsamp, double Dr) {
-    const int N = X.rows();
-    const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> uni_dist(0, 1); // uniform distribution between 0 and 1
-    static std::normal_distribution<double> norm_dist(0.0, 1.0); // defines standard normal distribution
-
-    MatrixXd phi(nsamp,N);
-    for (int disk_id=0; disk_id<N; disk_id++) {
-        // randomly orient the initial phi
-        phi(0,disk_id) = 2*M_PI*uni_dist(gen);
-
-        // for a given disk, loop over all times, drawing dphi increments at each time and summing it to previous values
-        for (int t=1; t<nsamp; t++) {
-            double dphi = sqrt(2*Dr*h) * norm_dist(gen);
-            double phi_new = phi(t-1,disk_id)+dphi;
-            phi(t,disk_id) = phi_new;
-        }
-    }
-    // Return the matrix of phi values at all times
-    return phi;
-
-}
-
 // Given the phi values from phi_active(), calculate the active force on each disk at time t
-MatrixXd get_active_force_at_time_t(MatrixXd phi, int t, double f, int N) {
+MatrixXd get_active_force(VectorXd phi, double f, int N) {
     // Compute the active force matrix at time t from the matrix of phi values at all times
     MatrixXd forces(N,2);
     for (int disk_id=0; disk_id<N; disk_id++) {
-        forces(disk_id,0) = f*std::cos(phi(t,disk_id));
-        forces(disk_id,1) = f*std::sin(phi(t,disk_id));
+        forces(disk_id,0) = f*std::cos(phi(disk_id));
+        forces(disk_id,1) = f*std::sin(phi(disk_id));
     }
     return forces;
 }
@@ -159,7 +133,8 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
     // Code to generate random number from standard normal distribution for stochastic part
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    static std::normal_distribution<double> norm_dist(0.0, 1.0); // defines standard normal distribution
+    static std::uniform_real_distribution<> uni_dist(0, 1); // uniform distribution between 0 and 1
+    static std::normal_distribution<> norm_dist(0.0, 1.0); // defines standard normal distribution
 
     // Initialize trajectories matrix
     MatrixXd x_trajectories(N, nsamp);
@@ -169,28 +144,36 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
     current_positions.col(0) = X.col(1);
     current_positions.col(1) = X.col(2);
 
-    // Compute phi values at all times for active force
-    MatrixXd phi_values = phi_active(X,f,Tmax,nsamp,Dr);
+    // Initialize the directions for all disks with random values from 0 to 2pi radians
+    VectorXd current_phi(N);
+    for (int disk_i=0; disk_i<N; disk_i++) {
+        current_phi(disk_i) = 2*M_PI*uni_dist(gen);
+    }
 
+    std::vector<std::vector<std::tuple<double, double, double>>> trajectories(N); // Vector to store tuples for each set of trajectories
+    
     // Integrate the SDE
-    double t = 0;
-
-    // Vector to store tuples for each set of trajectories
-    std::vector<std::vector<std::tuple<double, double, double>>> trajectories(N);
+    double t = 0;    
     for (size_t i=0; i<nsamp; ++i) {
-        for (int disk_i = 0; disk_i<N; ++disk_i) {
-            trajectories[disk_i].push_back(std::make_tuple(t, current_positions(disk_i,0), current_positions(disk_i,1)));
-        }
+        // Get the active force on each disk
+        MatrixXd active_force = get_active_force(current_phi,f,N);
 
+        // Disk updates/draw noise term
         MatrixXd dW(N,2);
-        for (int disk_id=0; disk_id<N; disk_id++) {
-            for (int coord=0; coord<2; coord++) {
-                dW(disk_id, coord) = sqrt(h) * norm_dist(gen); // Wiener process increment
+        for (int disk_i = 0; disk_i<N; ++disk_i) {
+            // Add current positions to trajectories
+            trajectories[disk_i].push_back(std::make_tuple(t, current_positions(disk_i,0), current_positions(disk_i,1)));
+
+            // Update phi value by drawing dphi increment from gaussian dist and summing it to previous phi value
+            double dphi = sqrt(2*Dr*h) * norm_dist(gen);
+            double phi_new = current_phi(disk_i)+dphi;
+            current_phi(disk_i) = phi_new;
+
+            // Draw Wiener process increments for each disk's coordinate in the timestep
+            for (int coord=0; coord<num_dimensions; coord++) {
+                dW(disk_i, coord) = sqrt(h) * norm_dist(gen); // Wiener process increment
             }
         }
-
-        // Get the active force on each disk
-        MatrixXd active_force = get_active_force_at_time_t(phi_values,i,f,N);
 
         // Use Euler's method to update the positions
         MatrixXd update = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + (dW.array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
@@ -215,7 +198,8 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
     // Code to generate random number from standard normal distribution for stochastic part
     static std::random_device rd;
     static std::mt19937 gen(rd());
-    static std::normal_distribution<double> norm_dist(0.0, 1.0); // defines standard normal distribution
+    static std::uniform_real_distribution<> uni_dist(0, 1); // uniform distribution between 0 and 1
+    static std::normal_distribution<> norm_dist(0.0, 1.0); // defines standard normal distribution
 
     // Initialize trajectories matrix
     MatrixXd x_trajectories(N, nsamp);
@@ -225,30 +209,39 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
     current_positions.col(0) = X.col(1);
     current_positions.col(1) = X.col(2);
 
-    // Compute phi values at all times for active force
-    MatrixXd phi_values = phi_active(X,f,Tmax,nsamp,Dr);
+    // Initialize the directions for all disks with random values from 0 to 2pi radians
+    VectorXd current_phi(N);
+    for (int disk_i=0; disk_i<N; disk_i++) {
+        current_phi(disk_i) = 2*M_PI*uni_dist(gen);
+    }
 
+    std::vector<std::vector<std::tuple<double, double, double>>> trajectories(N); // Vector to store tuples for each set of trajectories
+    
     // Integrate the SDE
     double t = 0;
-
-    // Vector to store tuples for each set of trajectories
-    std::vector<std::vector<std::tuple<double, double, double>>> trajectories(N);
     for (size_t i=0; i<nsamp; ++i) {
-        for (int disk_i = 0; disk_i<N; ++disk_i) {
-            trajectories[disk_i].push_back(std::make_tuple(t, current_positions(disk_i,0), current_positions(disk_i,1)));
-        }
+        // Get the active force on each disk
+        MatrixXd active_force = get_active_force(current_phi,f,N);
 
-        MatrixXd dW(N,2);
-        for (int disk_id=0; disk_id<N; disk_id++) {
-            for (int coord=0; coord<2; coord++) {
-                dW(disk_id, coord) = sqrt(h) * norm_dist(gen); // Wiener process increment
-            }
-        }
-        //double dW = sqrt(h) * norm_dist(gen); // Wiener process increment
+        // Generate Sk values for each disk's coordinate
         MatrixXd Sk = Generate_Sk(N, IntegrationType);
 
-        // Get the active force on each disk
-        MatrixXd active_force = get_active_force_at_time_t(phi_values,i,f,N);
+        // Disk updates/draw noise term
+        MatrixXd dW(N,2);
+        for (int disk_i = 0; disk_i<N; ++disk_i) {
+            // Add current positions to trajectories
+            trajectories[disk_i].push_back(std::make_tuple(t, current_positions(disk_i,0), current_positions(disk_i,1)));
+
+            // Update phi value by drawing dphi increment from gaussian dist and summing it to previous phi value
+            double dphi = sqrt(2*Dr*h) * norm_dist(gen);
+            double phi_new = current_phi(disk_i)+dphi;
+            current_phi(disk_i) = phi_new;
+
+            // Draw Wiener process increments for each disk's coordinate in the timestep
+            for (int coord=0; coord<num_dimensions; coord++) {
+                dW(disk_i, coord) = sqrt(h) * norm_dist(gen); // Wiener process increment
+            }
+        }
 
         // Compute Runge-Kutta coefficients
         MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + ((dW-Sk*sqrt(h)).array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
@@ -265,7 +258,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
 int main() {
     // Open the CSV file
     std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/"; // path to initial configuration data file here
-    std::string init_config="initial_state.csv";
+    std::string init_config="active_single_disk_initial_state.csv";
     std::ifstream file(dpath+init_config);
     if (!file.is_open()) {
         std::cerr << "Failed to open file." << std::endl;
