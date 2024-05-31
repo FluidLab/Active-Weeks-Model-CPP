@@ -81,7 +81,7 @@ MatrixXd get_active_force(VectorXd phi, double f, int N) {
     return forces;
 }
 
-// Define SDE parameters of the SDE: dX = a(t,X)dt+b(t,X)dW
+// Define parameters of the SDE: dX = a(t,X)dt+b(t,X)dW
 // Deterministic part a(t,X)
 MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma, double D0) {
     return D0*get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
@@ -257,9 +257,9 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
 
 int main() {
     // Open the CSV file
-    std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/"; // path to initial configuration data file here
-    std::string init_config="active_single_disk_initial_state.csv";
-    std::ifstream file(dpath+init_config);
+    std::string init_state_path="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/initial_states/"; // path to initial configuration data file here
+    std::string init_config="3_particles_epsilon=1_f=2_initial_state.csv"; // Edit data file name here - any way to specify this at the start of the script?
+    std::ifstream file(init_state_path+init_config);
     if (!file.is_open()) {
         std::cerr << "Failed to open file." << std::endl;
         return 1;
@@ -295,16 +295,11 @@ int main() {
     std::cout << initial_state << std::endl;
 
     // Test integration scheme with normal Brownian motion, save data
-    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 1000, pow(10,6), 1, 40, 0.5, 0, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)  
-
-    // std::cout << "Number of disks: " << brownian.size() << std::endl;
-    // std::cout << "Tuple size of each disk's vector:" << std::endl;
-    // for (const auto& set : brownian) {
-    //     std::cout << set.size() << std::endl;
-    // }
+    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 10000, pow(10,7), 1, 40, 0.5, 2, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
 
     // Write data to CSV file
-    std::ofstream outfile("data.csv");
+    std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/";
+    std::ofstream outfile(dpath+"3_particles_epsilon=1_f=2_data.csv");
     if (outfile.is_open()) {
         for (size_t i = 0; i < brownian[0].size(); ++i) {
             for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) { // Loop over each disk
