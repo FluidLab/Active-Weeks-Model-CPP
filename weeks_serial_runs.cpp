@@ -259,7 +259,7 @@ int main() {
     for (int sim_num = 0; sim_num < 5; ++sim_num) {
     // Open the CSV file
     std::string init_state_path="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/initial_states/"; // path to initial configuration data file here
-    std::string init_config="3_particles_epsilon=1_f=3_initial_state_run_"; // Edit data file name here - any way to specify this at the start of the script?
+    std::string init_config="3_particles_epsilon=1_f=0_initial_state_run_"; // Edit data file name here - any way to specify this at the start of the script?
     std::string loop_num=std::to_string(sim_num);
     std::string ending=".csv";
     std::ifstream file(init_state_path+init_config+loop_num+ending);
@@ -298,11 +298,11 @@ int main() {
     std::cout << initial_state << std::endl;
 
     // Test integration scheme with normal Brownian motion, save data
-    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 10000, pow(10,7), 1, 40, 0.5, 3, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
+    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 10000, pow(10,7), 1, 40, 0.5, 0, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
 
     // Write data to CSV file
     std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/multiple_runs/";
-    std::ofstream outfile(dpath+"3_particles_epsilon=1_f=3_data_run_"+std::to_string(sim_num)+".csv");
+    std::ofstream outfile(dpath+"3_particles_epsilon=1_f=0_data_run_"+std::to_string(sim_num)+".csv");
     if (outfile.is_open()) {
         for (size_t i = 0; i < brownian[0].size(); ++i) {
             for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) { // Loop over each disk
