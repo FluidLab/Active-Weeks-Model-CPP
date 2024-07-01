@@ -179,6 +179,11 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
         MatrixXd update = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + (dW.array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
         current_positions += update;
         t += h;
+
+        // Progress update every nsamp/10 iterations
+        if (i % (nsamp/10) == 0) {
+            std::cout << "Completed " << i << " iterations (" << (i * 100 / nsamp) << "% of total)" << std::endl;
+        }
     }
 
     return trajectories;
@@ -250,6 +255,11 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
         // Update x using the Runge-Kutta method
         current_positions += (K1+K2)/2;
         t += h;
+
+        // Progress update every nsamp/10 iterations
+        if (i % (nsamp/10) == 0) {
+            std::cout << "Completed " << i << " iterations (" << (i * 100 / nsamp) << "% of total)" << std::endl;
+        }
     }
 
     return trajectories;
@@ -258,7 +268,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
 int main() {
     // Open the CSV file
     std::string init_state_path="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/initial_states/r=0.89/"; // path to initial configuration data file here
-    std::string init_config="3_particles_epsilon=0.06_f=0_initial_state.csv"; // Edit data file name here - any way to specify this at the start of the script?
+    std::string init_config="3_particles_epsilon=0.25_f=0_initial_state.csv"; // Edit data file name here - any way to specify this at the start of the script?
     std::ifstream file(init_state_path+init_config);
     if (!file.is_open()) {
         std::cerr << "Failed to open file." << std::endl;
@@ -285,7 +295,7 @@ int main() {
     // Convert vector of vectors to Eigen matrix
     MatrixXd initial_state(data.size(), data[0].size());
     for (int i = 0; i < data.size(); ++i) {
-        for (int j = 0; j < data[i].size(); ++j) {
+        for (int j = 0; j < data[i].size(); ++j) { 
             initial_state(i, j) = data[i][j];
         }
     }
@@ -299,7 +309,7 @@ int main() {
 
     // Write data to CSV file
     std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/billion_time_steps/";
-    std::ofstream outfile(dpath+"3_particles_epsilon=0.06_f=0_data.csv");
+    std::ofstream outfile(dpath+"3_particles_epsilon=0.25_f=0_data.csv");
     if (outfile.is_open()) {
         for (size_t i = 0; i < brownian[0].size(); ++i) {
             for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) { // Loop over each disk
