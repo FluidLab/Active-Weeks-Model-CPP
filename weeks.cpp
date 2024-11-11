@@ -1,3 +1,4 @@
+#define _USE_MATH_DEFINES
 #include <iostream>
 #include <cmath>
 #include <random>
@@ -11,9 +12,79 @@ using namespace Eigen;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
+/////////////////////// Functions for defining the initial state ///////////////////////////////////
+bool check_disk_overlap(const Vector2d& pos1, const Vector2d& pos2, double r1, double r2) {
+    double dist = (pos1 - pos2).norm();
+    return dist <= (r1 + r2);
+}
+
+bool check_wall_collision(const Vector2d& pos, double r, double R) {
+    return pos.norm() >= (R - r);
+}
+
+MatrixXd generate_initial_state(int N, double r, double epsilon, double v = 0) {
+    // Initialize random number generator
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_real_distribution<> rand_r(0, 1);
+    std::uniform_real_distribution<> rand_theta(0, 2*M_PI);
+
+    double R = N*r + epsilon; // Size of enclosure
+    MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
+    int max_attempts = 1000;
+    int attempt = 0;
+    
+    while (attempt < max_attempts) {
+        bool valid_state = true;
+        
+        // Generate positions for all disks
+        for (int i = 0; i < N; ++i) {
+            double r_pos = rand_r(gen) * R;
+            double theta = rand_theta(gen);
+            double v_direction = rand_theta(gen);
+            
+            // Set disk properties
+            state(i, 0) = r; // radius
+            state(i, 1) = r_pos * cos(theta); // x
+            state(i, 2) = r_pos * sin(theta); // y
+            state(i, 3) = v * cos(v_direction); // vx
+            state(i, 4) = v * sin(v_direction); // vy
+            
+            // Check overlap with previous disks
+            for (int j = 0; j < i; ++j) {
+                Vector2d pos_i(state(i, 1), state(i, 2));
+                Vector2d pos_j(state(j, 1), state(j, 2));
+                if (check_disk_overlap(pos_i, pos_j, state(i, 0), state(j, 0))) {
+                    valid_state = false;
+                    break;
+                }
+            }
+            
+            // Check wall collision
+            if (valid_state) {
+                Vector2d pos_i(state(i, 1), state(i, 2));
+                if (check_wall_collision(pos_i, state(i, 0), R)) {
+                    valid_state = false;
+                }
+            }
+            
+            if (!valid_state) break;
+        }
+        
+        if (valid_state) {
+            return state;
+        }
+        
+        attempt++;
+    }
+    
+    throw std::runtime_error("Failed to generate valid initial state after maximum attempts");
+}
+
+////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk radius (current_state(0,0)) is 1
+    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -26,7 +97,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         distances(i,i) = 0;
 
         // each disk's nearest distance to the enclosure is R-r
-        wall_dist(i) = sigma/2+R-r(i);
+        wall_dist(i) = sigma*std::pow(2,1.0/6.0)/2+R-r(i); // replace sigma by sigma*2^(1/6)?
     }
 
     // loop over all unique disk pairs
@@ -57,8 +128,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
 
         //now add the force produced by the wall
         if (!((wall_dist(disk_i)/sigma)>std::pow(2,1.0/6.0))) {
-            double wall_xdist = (sigma/2+R)*x(disk_i)/r(disk_i);
-            double wall_ydist = (sigma/2+R)*y(disk_i)/r(disk_i);
+            double wall_xdist = (sigma*std::pow(2,1.0/6.0)/2+R)*x(disk_i)/r(disk_i);
+            double wall_ydist = (sigma*std::pow(2,1.0/6.0)/2+R)*y(disk_i)/r(disk_i);
             sum_grad_Ux += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
             +(6/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),6))*((wall_xdist-x(disk_i))/wall_dist(disk_i)); // minus sign out front is because my gradient calculates force FROM disk_i TO wall
             sum_grad_Uy += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
@@ -266,50 +337,30 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
 }
 
 int main() {
-    // Open the CSV file
-    std::string init_state_path="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/initial_states/r=0.89/"; // path to initial configuration data file here
-    std::string init_config="3_particles_epsilon=0.25_f=0_initial_state.csv"; // Edit data file name here - any way to specify this at the start of the script?
-    std::ifstream file(init_state_path+init_config);
-    if (!file.is_open()) {
-        std::cerr << "Failed to open file." << std::endl;
-        return 1;
-    }
-
-    // Read data from CSV file into a vector of vectors
-    std::vector<std::vector<double>> data;
-    std::string line;
-    while (std::getline(file, line)) {
-        std::stringstream ss(line);
-        std::vector<double> row;
-        double value;
-        while (ss >> value) {
-            row.push_back(value);
-            if (ss.peek() == ',') ss.ignore();
-        }
-        data.push_back(row);
-    }
-
-    // Close the file
-    file.close();
-
-    // Convert vector of vectors to Eigen matrix
-    MatrixXd initial_state(data.size(), data[0].size());
-    for (int i = 0; i < data.size(); ++i) {
-        for (int j = 0; j < data[i].size(); ++j) { 
-            initial_state(i, j) = data[i][j];
-        }
-    }
-
+    // Simulation parameters
+    const int N = 3;
+    const double r = 1.0/pow(2, 1.0/6.0);
+    const double epsilon = 1.0;
+    const double v = 0.0;
+    const double Tmax = 100000;
+    const int nsamp = (int)1e8;
+    const double int_strength = 40;
+    const double D0 = 0.5;
+    const double f = 0;
+    
+    // Generate initial state
+    MatrixXd initial_state = generate_initial_state(N, r, epsilon, v);
+    
     // Print initial state
-    std::cout << "Initial state matrix loaded from CSV file:" << std::endl;
+    std::cout << "Generated initial state:" << std::endl;
     std::cout << initial_state << std::endl;
 
-    // Test integration scheme with normal Brownian motion, save data
-    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 100000, pow(10,8), 0.25, 40, 0.5, 0, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
+    // Runge-Kutta method to solve the Langevin dynamics from the initial state, save data
+    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, D0, f, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
 
     // Write data to CSV file
     std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/billion_time_steps/";
-    std::ofstream outfile(dpath+"3_particles_epsilon=0.25_f=0_data.csv");
+    std::ofstream outfile(dpath+"long_walldist_3_particles_epsilon=1_f=0_data.csv");
     if (outfile.is_open()) {
         for (size_t i = 0; i < brownian[0].size(); ++i) {
             for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) { // Loop over each disk
