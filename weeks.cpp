@@ -7,10 +7,39 @@
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
+#include <omp.h>
 
 using namespace Eigen;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
+
+/////////////////////// Thread-safe random number generator class //////////////////////////////////
+class ThreadsafeRNG {
+private:
+    std::mt19937 gen;
+    std::uniform_real_distribution<> uni_dist;
+    std::normal_distribution<> norm_dist;
+
+public:
+    ThreadsafeRNG() : 
+        gen(std::random_device{}()),
+        uni_dist(0.0, 1.0),
+        norm_dist(0.0, 1.0) {}
+
+    // Copy constructor that ensures different threads get different seeds
+    ThreadsafeRNG(const ThreadsafeRNG&) : 
+        gen(std::random_device{}()),
+        uni_dist(0.0, 1.0),
+        norm_dist(0.0, 1.0) {}
+
+    double uniform() {
+        return uni_dist(gen);
+    }
+
+    double normal() {
+        return norm_dist(gen);
+    }
+};
 
 /////////////////////// Functions for defining the initial state ///////////////////////////////////
 bool check_disk_overlap(const Vector2d& pos1, const Vector2d& pos2, double r1, double r2) {
@@ -22,13 +51,7 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-MatrixXd generate_initial_state(int N, double r, double epsilon, double v = 0) {
-    // Initialize random number generator
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_real_distribution<> rand_r(0, 1);
-    std::uniform_real_distribution<> rand_theta(0, 2*M_PI);
-
+MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
     double R = N*r + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
@@ -39,9 +62,9 @@ MatrixXd generate_initial_state(int N, double r, double epsilon, double v = 0) {
         
         // Generate positions for all disks
         for (int i = 0; i < N; ++i) {
-            double r_pos = rand_r(gen) * R;
-            double theta = rand_theta(gen);
-            double v_direction = rand_theta(gen);
+            double r_pos = rng.uniform() * R;
+            double theta = 2 * M_PI *rng.uniform();
+            double v_direction = 2 * M_PI *rng.uniform();
             
             // Set disk properties
             state(i, 0) = r; // radius
@@ -165,25 +188,19 @@ MatrixXd b(MatrixXd X, double D0) {
 }
 
 // Code to determine Sk in Runge-Kutta method definition (+-1 with prob 1/2 for Ito SDE, 0 with probability 1 for Stratonovich SDE)
-MatrixXd Generate_Sk(int N, std::string IntegrationType = "I") {
+MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I") {
     // Check integration type
     if (!(IntegrationType == "I" || IntegrationType == "S")) {
         throw std::invalid_argument("IntegrationType argument must be 'S' or 'I'");
     }
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> uni_dist(0, 1); // uniform distribution between 0 and 1
 
     MatrixXd Sk(N,2);
     for (int disk_id=0; disk_id<N; disk_id++) {
         for (int coord=0; coord<2; coord++) {
             Sk(disk_id,coord) = 0; // Stratonovich integration sets Sk=0 always
             if (IntegrationType == "I") {
-            // Generate a random number
-            double rand_num = uni_dist(gen);
-            
-            // Assign 1 or -1 based on the probability
-            Sk(disk_id,coord) = (rand_num < 0.5) ? 1 : -1;
+            // Generate random number (uniform dist.), assign 1 or -1 based on the probability
+            Sk(disk_id,coord) = (rng.uniform() < 0.5) ? 1 : -1;
             }
         }
     }
@@ -195,17 +212,12 @@ MatrixXd Generate_Sk(int N, std::string IntegrationType = "I") {
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Nx3 vector of disk trajectories (t, x and y components of the trajectory form the columns)
-std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
+std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, ThreadsafeRNG& rng, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
     const int N = X.rows();
     const int num_dimensions = 2; // consider changing this later for multidimensional sims - would need to change in lots of other places
     const double sigma = 2*X(0,0); // sigma=disk diameter. 0th element of each row in X is the disk radius - same for all disks.
     const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
     const double Dr = 3*D0/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
-    // Code to generate random number from standard normal distribution for stochastic part
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> uni_dist(0, 1); // uniform distribution between 0 and 1
-    static std::normal_distribution<> norm_dist(0.0, 1.0); // defines standard normal distribution
 
     // Initialize trajectories matrix
     MatrixXd x_trajectories(N, nsamp);
@@ -218,7 +230,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
     // Initialize the directions for all disks with random values from 0 to 2pi radians
     VectorXd current_phi(N);
     for (int disk_i=0; disk_i<N; disk_i++) {
-        current_phi(disk_i) = 2*M_PI*uni_dist(gen);
+        current_phi(disk_i) = 2*M_PI*rng.uniform();
     }
 
     std::vector<std::vector<std::tuple<double, double, double>>> trajectories(N); // Vector to store tuples for each set of trajectories
@@ -236,13 +248,13 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
             trajectories[disk_i].push_back(std::make_tuple(t, current_positions(disk_i,0), current_positions(disk_i,1)));
 
             // Update phi value by drawing dphi increment from gaussian dist and summing it to previous phi value
-            double dphi = sqrt(2*Dr*h) * norm_dist(gen);
+            double dphi = sqrt(2*Dr*h) * rng.normal();
             double phi_new = current_phi(disk_i)+dphi;
             current_phi(disk_i) = phi_new;
 
             // Draw Wiener process increments for each disk's coordinate in the timestep
             for (int coord=0; coord<num_dimensions; coord++) {
-                dW(disk_i, coord) = sqrt(h) * norm_dist(gen); // Wiener process increment
+                dW(disk_i, coord) = sqrt(h) * rng.normal(); // Wiener process increment
             }
         }
 
@@ -265,17 +277,12 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Nx3 vector of disk trajectories (t, x and y components of the trajectory form the columns)
-std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
+std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, ThreadsafeRNG& rng, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
     const int N = X.rows();
     const int num_dimensions = 2; // consider changing this later for multidimensional sims - would need to change in lots of other places
     const double sigma = 2*X(0,0); // sigma=disk diameter. 0th element of each row in X is the disk radius - same for all disks.
     const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
     const double Dr = 3*D0/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
-    // Code to generate random number from standard normal distribution for stochastic part
-    static std::random_device rd;
-    static std::mt19937 gen(rd());
-    static std::uniform_real_distribution<> uni_dist(0, 1); // uniform distribution between 0 and 1
-    static std::normal_distribution<> norm_dist(0.0, 1.0); // defines standard normal distribution
 
     // Initialize trajectories matrix
     MatrixXd x_trajectories(N, nsamp);
@@ -288,7 +295,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
     // Initialize the directions for all disks with random values from 0 to 2pi radians
     VectorXd current_phi(N);
     for (int disk_i=0; disk_i<N; disk_i++) {
-        current_phi(disk_i) = 2*M_PI*uni_dist(gen);
+        current_phi(disk_i) = 2*M_PI*rng.uniform();
     }
 
     std::vector<std::vector<std::tuple<double, double, double>>> trajectories(N); // Vector to store tuples for each set of trajectories
@@ -300,7 +307,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
         MatrixXd active_force = get_active_force(current_phi,f,N);
 
         // Generate Sk values for each disk's coordinate
-        MatrixXd Sk = Generate_Sk(N, IntegrationType);
+        MatrixXd Sk = Generate_Sk(N, rng, IntegrationType);
 
         // Disk updates/draw noise term
         MatrixXd dW(N,2);
@@ -309,13 +316,13 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
             trajectories[disk_i].push_back(std::make_tuple(t, current_positions(disk_i,0), current_positions(disk_i,1)));
 
             // Update phi value by drawing dphi increment from gaussian dist and summing it to previous phi value
-            double dphi = sqrt(2*Dr*h) * norm_dist(gen);
+            double dphi = sqrt(2*Dr*h) * rng.normal();
             double phi_new = current_phi(disk_i)+dphi;
             current_phi(disk_i) = phi_new;
 
             // Draw Wiener process increments for each disk's coordinate in the timestep
             for (int coord=0; coord<num_dimensions; coord++) {
-                dW(disk_i, coord) = sqrt(h) * norm_dist(gen); // Wiener process increment
+                dW(disk_i, coord) = sqrt(h) * rng.normal(); // Wiener process increment
             }
         }
 
@@ -340,47 +347,149 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0);
-    const double epsilon = 1.0;
+    const std::vector<double> epsilons = {0.06, 0.1, 0.25, 0.5, 0.75, 1.0}; // Different epsilon values
     const double v = 0.0;
     const double Tmax = 100000;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
     const double D0 = 0.5;
     const double f = 0;
-    
-    // Generate initial state
-    MatrixXd initial_state = generate_initial_state(N, r, epsilon, v);
-    
-    // Print initial state
-    std::cout << "Generated initial state:" << std::endl;
-    std::cout << initial_state << std::endl;
 
-    // Runge-Kutta method to solve the Langevin dynamics from the initial state, save data
-    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, D0, f, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
+    bool had_error = false;  // Flag to track errors
 
-    // Write data to CSV file
-    std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/billion_time_steps/";
-    std::ofstream outfile(dpath+"long_walldist_3_particles_epsilon=1_f=0_data.csv");
-    if (outfile.is_open()) {
-        for (size_t i = 0; i < brownian[0].size(); ++i) {
-            for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) { // Loop over each disk
-                const auto& tuple = brownian[disk_i][i];
-                outfile << std::get<0>(tuple) << "," // Write t value
-                        << std::get<1>(tuple) << "," // Write x
-                        << std::get<2>(tuple); // Write y
-                    
-                if (disk_i < brownian.size()-1) {
-                    outfile << ","; // Add comma between disks
+    // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
+        #pragma omp parallel for schedule(dynamic)
+    for(size_t i = 0; i < epsilons.size(); i++) {
+        if (!had_error) {  // Only continue if no errors have occurred
+            ThreadsafeRNG rng;
+            double epsilon = epsilons[i];
+            
+            #pragma omp critical
+            {
+                std::cout << "Thread " << omp_get_thread_num() 
+                          << " starting calculation for epsilon = " << epsilon << std::endl;
+            }
+
+            MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
+            std::vector<std::vector<std::tuple<double, double, double>>> brownian = 
+                solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, rng, D0, f, "I");
+
+            // Write data to CSV file
+            std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/billion_time_steps/";
+            std::stringstream filename;
+            filename << N << "_particles_epsilon=" << epsilon << "_f=" << f << "_data.csv";
+            std::string dynamic_filename = filename.str();
+
+            #pragma omp critical 
+            {
+                std::ofstream outfile(dpath+dynamic_filename);
+                if (outfile.is_open()) {
+                    for (size_t j = 0; j < brownian[0].size(); ++j) {
+                        for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) {
+                            const auto& tuple = brownian[disk_i][j];
+                            outfile << std::get<0>(tuple) << ","
+                                    << std::get<1>(tuple) << ","
+                                    << std::get<2>(tuple);
+                                
+                            if (disk_i < brownian.size()-1) {
+                                outfile << ",";
+                            }
+                        }
+                        outfile << std::endl;
+                    }
+                    outfile.close();
+                    std::cout << "Thread " << omp_get_thread_num() 
+                              << " finished calculation and saved data for epsilon = " << epsilon << std::endl;
+                } else {
+                    std::cerr << "Thread " << omp_get_thread_num() 
+                              << " failed to open file for epsilon = " << epsilon << std::endl;
+                    had_error = true;  // Set error flag instead of returning
                 }
             }
-            outfile << std::endl; // End of line
         }
-        outfile.close();
-        std::cout << "Data saved to data.csv" << std::endl;
-    } else {
-        std::cerr << "Failed to open file for writing." << std::endl;
-        return 1;
     }
 
-    return 0;
+    return had_error ? 1 : 0;  // Return error code after parallel region
 }
+
+
+//     #pragma omp parallel for schedule(dynamic)
+//     for(size_t i = 0; i < epsilons.size(); i++) {
+
+//         // Create a thread-local RNG
+//         ThreadsafeRNG rng;
+
+//         double epsilon = epsilons[i];
+//         MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng); // Generate initial state
+
+//         // Make sure file writing is thread-safe
+//         #pragma omp critical
+//         {
+//             std::cout << "Generated initial state:" << std::endl; // print initial state
+//             std::cout << initial_state << std::endl;
+//         }
+
+//         // Runge-Kutta method to solve the Langevin dynamics from the initial state, save data
+//         std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, D0, f, rng, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f, thread-safe rng instance, integration type)
+
+//         // Write data to CSV file
+//         std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/billion_time_steps/";
+//         // Create dynamic filename using string stream
+//         std::stringstream filename;
+//         filename << N << "_particles_epsilon=" << epsilon << "_f=" << f << "_data.csv";
+//         std::string dynamic_filename = filename.str();
+
+//         // Put file writing in a critical section
+//         #pragma omp critical 
+//             {
+//                 std::ofstream outfile(dpath+dynamic_filename);
+//                 if (outfile.is_open()) {
+//                     for (size_t j = 0; j < brownian[0].size(); ++j) {
+//                         for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) {
+//                             const auto& tuple = brownian[disk_i][j];
+//                             outfile << std::get<0>(tuple) << ","
+//                                     << std::get<1>(tuple) << ","
+//                                     << std::get<2>(tuple);
+                                
+//                             if (disk_i < brownian.size()-1) {
+//                                 outfile << ",";
+//                             }
+//                         }
+//                         outfile << std::endl;
+//                     }
+//                     outfile.close();
+//                     std::cout << "Thread " << omp_get_thread_num() 
+//                               << " finished calculation and saved data for epsilon = " << epsilon << std::endl;
+//                 } else {
+//                     std::cerr << "Thread " << omp_get_thread_num() 
+//                               << " failed to open file for epsilon = " << epsilon << std::endl;
+//                     had_error = true;  // Set error flag
+//                 }
+//             }
+//     }
+//     return had_error ? 1 : 0;  // Return error code after parallel region
+
+//     //     std::ofstream outfile(dpath+dynamic_filename);
+//     //     if (outfile.is_open()) {
+//     //         for (size_t i = 0; i < brownian[0].size(); ++i) {
+//     //             for (int disk_i = 0; disk_i < brownian.size(); ++disk_i) { // Loop over each disk
+//     //                 const auto& tuple = brownian[disk_i][i];
+//     //                 outfile << std::get<0>(tuple) << "," // Write t value
+//     //                         << std::get<1>(tuple) << "," // Write x
+//     //                         << std::get<2>(tuple); // Write y
+                        
+//     //                 if (disk_i < brownian.size()-1) {
+//     //                     outfile << ","; // Add comma between disks
+//     //                 }
+//     //             }
+//     //             outfile << std::endl; // End of line
+//     //         }
+//     //         outfile.close();
+//     //         std::cout << "Data saved to " << dynamic_filename << std::endl;
+//     //     } else {
+//     //         std::cerr << "Failed to open file for writing." << std::endl;
+//     //         return 1;
+//     //     }
+//     // }
+//     // return 0;
+// }

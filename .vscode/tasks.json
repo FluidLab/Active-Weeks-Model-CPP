@@ -9,6 +9,7 @@
                 "C:/Program Files/c++ libraries/eigen-3.4.0",
                 "-fdiagnostics-color=always",
                 "-g",
+                "-fopenmp",
                 "${file}",
                 "-o",
                 "${fileDirname}\\${fileBasenameNoExtension}.exe",
@@ -33,6 +34,7 @@
             "args": [
                 "-fdiagnostics-color=always",
                 "-g",
+                "-fopenmp",
                 "${file}",
                 "-o",
                 "${fileDirname}\\${fileBasenameNoExtension}.exe"
