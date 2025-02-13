@@ -52,7 +52,7 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
 }
 
 MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r + epsilon; // Size of enclosure
+    double R = N*r*std::pow(2,1.0/6.0) + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -134,6 +134,43 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
     return v1_to_v_hop.norm() * sin_of_angle;
 }
 
+////////////////////// Function to calculate cage length lc at a given time ////////////////////////////////////////////////////
+double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int hopping_disk_id = 2) {
+    const int N = positions.rows();
+    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (sigma*2^(1/6)/2) is 1
+    VectorXd x = positions.col(0);
+    VectorXd y = positions.col(1);
+    VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
+
+    // Store distances from hopping_disk_id to edges of other disks
+    std::vector<double> edge_distances;
+    
+    // Calculate distance from hopping_disk_id to all other disk edges
+    for (int i = 0; i < N; ++i) {
+        if (i != hopping_disk_id) {
+            // Get center-to-center distance
+            double rij = std::sqrt(std::pow((x(hopping_disk_id)-x(i)),2) + 
+                                 std::pow((y(hopping_disk_id)-y(i)),2));
+            // Subtract effective radius of one disk to get distance to edge of potential
+            double edge_dist = rij - sigma*std::pow(2,1.0/6.0)/2;
+            edge_distances.push_back(edge_dist);
+        }
+    }
+
+    // each disk's nearest distance to the edge of the potential felt by the wall is r_eff+R-r
+    double wall_dist = sigma*std::pow(2,1.0/6.0)/2 + R - r(hopping_disk_id);
+    edge_distances.push_back(wall_dist);
+
+    // Calculate cage length lc as average of all distances
+    double lc = 0;
+    for (const double& dist : edge_distances) {
+        lc += dist;
+    }
+    lc /= edge_distances.size();
+    
+    return lc;
+}
+
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
@@ -149,8 +186,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         //populate (i,i) elements with zeros (distance from disk to itself is zero)
         distances(i,i) = 0;
 
-        // each disk's nearest distance to the enclosure is R-r
-        wall_dist(i) = sigma*std::pow(2,1.0/6.0)/2+R-r(i); // replace sigma by sigma*2^(1/6)?
+        // each disk's nearest distance to the extent of the potential felt by the wall is r_eff+R-r
+        wall_dist(i) = sigma*std::pow(2,1.0/6.0)/2+R-r(i);
     }
 
     // loop over all unique disk pairs
@@ -252,6 +289,10 @@ void runsim_calc_Fh_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     const double h = Tmax/nsamp;
     const double Dr = 3*T/pow(sigma,2);
 
+    // Initialize variables for cage length calculation over the simulation
+    double lc_sum = 0.0;
+    long lc_count = 0;
+
     // Calculate theoretical h_max and add small buffer for soft disks
     const double h_max_theory = 2 + epsilon + sqrt(3 + 4*epsilon + pow(epsilon,2));
     const double buffer = 0.07; // Add 7% buffer for soft interactions
@@ -307,6 +348,11 @@ void runsim_calc_Fh_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     int bin_idx = get_bin_index(h_value);
     if(bin_idx >= 0) bin_counts[bin_idx]++;
 
+    // Calculate inital lc value, update the sum and count
+    double lc_value = calculate_lc(current_positions, epsilon, sigma);
+    lc_sum += lc_value;
+    lc_count++;
+
     // Integrate the SDE
     double t = 0;
     int total_counts = 1; // Keep track of total number of samples 
@@ -348,6 +394,11 @@ void runsim_calc_Fh_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
             total_counts++;
         }
 
+        // Calculate lc value, update the sum and count
+        lc_value = calculate_lc(current_positions, epsilon, sigma);
+        lc_sum += lc_value;
+        lc_count++;
+
         // Progress update
         if (i % (nsamp/10) == 0) {
             std::cout << "Completed " << i << " iterations (" << (i * 100 / nsamp) << "% of total)" << std::endl;
@@ -359,6 +410,13 @@ void runsim_calc_Fh_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         outfile << bin_edges[j] << "," 
                << static_cast<double>(bin_counts[j]) << "\n";
     }
+
+    // Output estimated cage length lc
+    double avg_lc = lc_sum / lc_count;
+    #pragma omp critical
+    {
+        std::cout << "Average cage length (lc) for f = " << f << ": " << avg_lc << std::endl;
+    }
     outfile.close();
 }
 
@@ -367,13 +425,16 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 1;
+    const double epsilon = 0.25;
     const double v = 0.0;
     const double Tmax = 10000;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
     const double T = 0.5;
-    Eigen::VectorXd f_vals = Eigen::VectorXd::LinSpaced(61, 2, 5); // Different f values to run in parallel - for spacing of 0.05 between 2 and 5, you need (5 - 2)/0.05 + 1 = 61 points
+    const double Dr = 0.5; // rotational diffusion coefficient
+    //Eigen::VectorXd f_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // Different f values to run in parallel - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
+    Eigen::VectorXd f_vals(3);
+    f_vals << 0, 2, 5;
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -396,7 +457,7 @@ int main() {
                 
                 std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/h landscapes 05-02-2025/";
                 std::stringstream filename;
-                filename << N << "_particles_epsilon=" << epsilon << "_f=" << f << "_h_landscapes.csv";
+                filename << "T=" << T << "_epsilon=" << epsilon << "_f=" << f << "_h_landscapes.csv";
                 std::string output_file = dpath + filename.str();
 
                 runsim_calc_Fh_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
