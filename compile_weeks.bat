@@ -1,1 +1,0 @@
-g++ -std=c++11 -O2 -fopenmp -I "C:/Program Files/c++ libraries/eigen-3.4.0" -fdiagnostics-color=always -g weeks.cpp -o weeks.exe
