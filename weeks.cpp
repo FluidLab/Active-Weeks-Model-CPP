@@ -177,14 +177,14 @@ MatrixXd get_active_force(VectorXd phi, double f, int N) {
 
 // Define parameters of the SDE: dX = a(t,X)dt+b(t,X)dW
 // Deterministic part a(t,X)
-MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma, double D0) {
-    return D0*get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
+MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma) {
+    return get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
 }
 
 // Stochastic part b(t,X)
-MatrixXd b(MatrixXd X, double D0) {
+MatrixXd b(MatrixXd X, double T) {
     const int N = X.rows();
-    return MatrixXd::Constant(N, 2, sqrt(2*D0)); // for Brownian motion with diffusion coefficient D (mu*k_B*T=D), b=sqrt(2D)
+    return MatrixXd::Constant(N, 2, sqrt(2*T)); // for Brownian motion with D/(k_BT)=1 and defining k_BT = T, b=sqrt(2T)
 }
 
 // Code to determine Sk in Runge-Kutta method definition (+-1 with prob 1/2 for Ito SDE, 0 with probability 1 for Stratonovich SDE)
@@ -212,16 +212,14 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Nx3 vector of disk trajectories (t, x and y components of the trajectory form the columns)
-std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, ThreadsafeRNG& rng, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
+std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, ThreadsafeRNG& rng, double T=0.5, double f=0, std::string IntegrationType = "I") {    
     const int N = X.rows();
     const int num_dimensions = 2; // consider changing this later for multidimensional sims - would need to change in lots of other places
     const double sigma = 2*X(0,0); // sigma=disk diameter. 0th element of each row in X is the disk radius - same for all disks.
     const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
-    const double Dr = 3*D0/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
+    const double Dr = 3*T/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
 
     // Initialize trajectories matrix
-    MatrixXd x_trajectories(N, nsamp);
-    MatrixXd y_trajectories(N, nsamp);
     MatrixXd current_positions(N,2);
 
     current_positions.col(0) = X.col(1);
@@ -259,7 +257,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
         }
 
         // Use Euler's method to update the positions
-        MatrixXd update = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + (dW.array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
+        MatrixXd update = h*(a(current_positions, epsilon, int_strength, sigma)+active_force) + (dW.array()*b(current_positions, T).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
         current_positions += update;
         t += h;
 
@@ -277,18 +275,15 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Nx3 vector of disk trajectories (t, x and y components of the trajectory form the columns)
-std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, ThreadsafeRNG& rng, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
+std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, ThreadsafeRNG& rng, double T=0.5, double f=0, std::string IntegrationType = "I") {    
     const int N = X.rows();
     const int num_dimensions = 2; // consider changing this later for multidimensional sims - would need to change in lots of other places
     const double sigma = 2*X(0,0); // sigma=disk diameter. 0th element of each row in X is the disk radius - same for all disks.
     const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
-    const double Dr = 3*D0/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
+    const double Dr = 3*T/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
 
     // Initialize trajectories matrix
-    MatrixXd x_trajectories(N, nsamp);
-    MatrixXd y_trajectories(N, nsamp);
     MatrixXd current_positions(N,2);
-
     current_positions.col(0) = X.col(1);
     current_positions.col(1) = X.col(2);
 
@@ -327,8 +322,8 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
         }
 
         // Compute Runge-Kutta coefficients
-        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + ((dW-Sk*sqrt(h)).array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
-        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma, D0)+active_force) + ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, D0).array()).matrix();
+        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma)+active_force) + ((dW-Sk*sqrt(h)).array()*b(current_positions, T).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
+        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma)+active_force) + ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, T).array()).matrix();
 
         // Update x using the Runge-Kutta method
         current_positions += (K1+K2)/2;
@@ -346,36 +341,36 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
 int main() {
     // Simulation parameters
     const int N = 3;
-    const double r = 1.0/pow(2, 1.0/6.0);
-    const std::vector<double> epsilons = {0.06, 0.1, 0.25, 0.5, 0.75, 1.0}; // Different epsilon values
+    const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
+    const double epsilon = 0.06;
     const double v = 0.0;
     const double Tmax = 100000;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
-    const double D0 = 0.5;
-    const double f = 0;
+    const double T = 0.5;
+    const std::vector<double> f_vals = {1.7,2,3,4,5}; // Different f values 0,0.5,1,1.2,1.5,  1.7,2,3,4,5
 
     bool had_error = false;  // Flag to track errors
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
-        #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < epsilons.size(); i++) {
+    #pragma omp parallel for schedule(dynamic)
+    for(size_t i = 0; i < f_vals.size(); i++) {
         if (!had_error) {  // Only continue if no errors have occurred
             ThreadsafeRNG rng;
-            double epsilon = epsilons[i];
+            double f = f_vals[i];
             
             #pragma omp critical
             {
                 std::cout << "Thread " << omp_get_thread_num() 
-                          << " starting calculation for epsilon = " << epsilon << std::endl;
+                          << " starting calculation for f = " << f << std::endl;
             }
 
             MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
             std::vector<std::vector<std::tuple<double, double, double>>> brownian = 
-                solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, rng, D0, f, "I");
+                solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, rng, T, f, "I");
 
             // Write data to CSV file
-            std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/billion_time_steps/";
+            std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/varying_f_epsilon=0.06/";
             std::stringstream filename;
             filename << N << "_particles_epsilon=" << epsilon << "_f=" << f << "_data.csv";
             std::string dynamic_filename = filename.str();
@@ -399,10 +394,10 @@ int main() {
                     }
                     outfile.close();
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation and saved data for epsilon = " << epsilon << std::endl;
+                              << " finished calculation and saved data for f = " << f << std::endl;
                 } else {
                     std::cerr << "Thread " << omp_get_thread_num() 
-                              << " failed to open file for epsilon = " << epsilon << std::endl;
+                              << " failed to open file for f = " << f << std::endl;
                     had_error = true;  // Set error flag instead of returning
                 }
             }

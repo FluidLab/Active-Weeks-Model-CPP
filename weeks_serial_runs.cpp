@@ -83,14 +83,14 @@ MatrixXd get_active_force(VectorXd phi, double f, int N) {
 
 // Define parameters of the SDE: dX = a(t,X)dt+b(t,X)dW
 // Deterministic part a(t,X)
-MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma, double D0) {
-    return D0*get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
+MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma) {
+    return get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
 }
 
 // Stochastic part b(t,X)
-MatrixXd b(MatrixXd X, double D0) {
+MatrixXd b(MatrixXd X, double T) {
     const int N = X.rows();
-    return MatrixXd::Constant(N, 2, sqrt(2*D0)); // for Brownian motion with diffusion coefficient D (mu*k_B*T=D), b=sqrt(2D)
+    return MatrixXd::Constant(N, 2, sqrt(2*T)); // for Brownian motion with D/(k_BT)=1 and defining k_BT = T, b=sqrt(2T)
 }
 
 // Code to determine Sk in Runge-Kutta method definition (+-1 with prob 1/2 for Ito SDE, 0 with probability 1 for Stratonovich SDE)
@@ -124,12 +124,12 @@ MatrixXd Generate_Sk(int N, std::string IntegrationType = "I") {
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Nx3 vector of disk trajectories (t, x and y components of the trajectory form the columns)
-std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
+std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, double T=0.5, double f=0, std::string IntegrationType = "I") {    
     const int N = X.rows();
     const int num_dimensions = 2; // consider changing this later for multidimensional sims - would need to change in lots of other places
     const double sigma = 2*X(0,0); // sigma=disk diameter. 0th element of each row in X is the disk radius - same for all disks.
     const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
-    const double Dr = 3*D0/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
+    const double Dr = 3*T/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
     // Code to generate random number from standard normal distribution for stochastic part
     static std::random_device rd;
     static std::mt19937 gen(rd());
@@ -176,7 +176,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
         }
 
         // Use Euler's method to update the positions
-        MatrixXd update = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + (dW.array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
+        MatrixXd update = h*(a(current_positions, epsilon, int_strength, sigma)+active_force) + (dW.array()*b(current_positions, T).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
         current_positions += update;
         t += h;
     }
@@ -189,12 +189,12 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_Euler(MatrixX
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Nx3 vector of disk trajectories (t, x and y components of the trajectory form the columns)
-std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, double D0=0.5, double f=0, std::string IntegrationType = "I") {    
+std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(MatrixXd X, double Tmax, int nsamp, double epsilon, double int_strength, double T=0.5, double f=0, std::string IntegrationType = "I") {    
     const int N = X.rows();
     const int num_dimensions = 2; // consider changing this later for multidimensional sims - would need to change in lots of other places
     const double sigma = 2*X(0,0); // sigma=disk diameter. 0th element of each row in X is the disk radius - same for all disks.
     const double h = Tmax/nsamp; // h is the same thing as dt=Tmax/nsamp
-    const double Dr = 3*D0/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
+    const double Dr = 3*T/pow(sigma,2); // Rotational diffusion coefficient related to translational from Stokes-Einstein
     // Code to generate random number from standard normal distribution for stochastic part
     static std::random_device rd;
     static std::mt19937 gen(rd());
@@ -244,8 +244,8 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
         }
 
         // Compute Runge-Kutta coefficients
-        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + ((dW-Sk*sqrt(h)).array()*b(current_positions, D0).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
-        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma, D0)+active_force) + ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, D0).array()).matrix();
+        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma)+active_force) + ((dW-Sk*sqrt(h)).array()*b(current_positions, T).array()).matrix(); // the array conversion used to implement Hadamard product - noise terms should multiply to their specific dimension
+        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma)+active_force) + ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, T).array()).matrix();
 
         // Update x using the Runge-Kutta method
         current_positions += (K1+K2)/2;
@@ -298,7 +298,7 @@ int main() {
     std::cout << initial_state << std::endl;
 
     // Test integration scheme with normal Brownian motion, save data
-    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 10000, pow(10,7), 1, 40, 0.5, 0, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,D0,active force magnitude f,integration type)
+    std::vector<std::vector<std::tuple<double, double, double>>> brownian = solve_RungeKutta(initial_state, 10000, pow(10,7), 1, 40, 0.5, 0, "I"); // (initial state, Tmax, nsamp, epsilon, int_strength,T,active force magnitude f,integration type)
 
     // Write data to CSV file
     std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/multiple_runs/";

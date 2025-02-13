@@ -104,16 +104,14 @@ MatrixXd generate_initial_state(int N, double r, double epsilon, double v, Threa
     throw std::runtime_error("Failed to generate valid initial state after maximum attempts");
 }
 
-////////////////////// Function to calculate psi at a given time ////////////////////////////////////////////////////
-double calculate_psi(const VectorXd& current_angles) {
-    const int N = current_angles.rows();
-    double sum_sin = 0;
-    double sum_cos = 0;
-    for (double theta : current_angles) {
-    sum_sin += sin(theta);
-    sum_cos += cos(theta);
+////////////////////// Helper function to check if absolute value of h falls outside the allowed range /////////////
+void validate_h_value(double h_value, double h_min, double h_max) {
+    double abs_value = std::abs(h_value);
+    if(abs_value < h_min || abs_value >= h_max) {
+        throw std::runtime_error("ERROR: |h| value " + std::to_string(abs_value) + 
+                               " outside bounds [" + std::to_string(h_min) + 
+                               ", " + std::to_string(h_max) + "]");
     }
-    return sqrt(sum_sin * sum_sin + sum_cos * sum_cos)/N;
 }
 
 ////////////////////// Function to calculate h at a given time ////////////////////////////////////////////////////
@@ -219,14 +217,14 @@ MatrixXd get_active_force(VectorXd phi, double f, int N) {
 
 // Define parameters of the SDE: dX = a(t,X)dt+b(t,X)dW
 // Deterministic part a(t,X)
-MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma, double D0) {
-    return D0*get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
+MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma) {
+    return get_WCA_force(X, epsilon, int_strength, sigma); // Nx2 matrix
 }
 
 // Stochastic part b(t,X)
-MatrixXd b(MatrixXd X, double D0) {
+MatrixXd b(MatrixXd X, double T) {
     const int N = X.rows();
-    return MatrixXd::Constant(N, 2, sqrt(2*D0)); // for Brownian motion with diffusion coefficient D (mu*k_B*T=D), b=sqrt(2D)
+    return MatrixXd::Constant(N, 2, sqrt(2*T)); // for Brownian motion with D/(k_BT)=1 and defining k_BT = T, b=sqrt(2T)
 }
 
 // Code to determine Sk in Runge-Kutta method definition (+-1 with prob 1/2 for Ito SDE, 0 with probability 1 for Stratonovich SDE)
@@ -257,12 +255,18 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
 // Outputs: Length nsamp vector of h values for the system
 void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon, 
                            double int_strength, ThreadsafeRNG& rng, const std::string& filename,
-                           double D0=0.5, double f=0, std::string IntegrationType="I", 
+                           double T=0.5, double f=0, std::string IntegrationType="I", 
                            int chunk_size=1000000) {    
     const int N = X.rows();
     const double sigma = 2*X(0,0);
     const double h = Tmax/nsamp;
-    const double Dr = 3*D0/pow(sigma,2);
+    const double Dr = 3*T/pow(sigma,2);
+
+    // Calculate theoretical h_max and add small buffer for soft disks
+    const double h_max_theory = 2 + epsilon + sqrt(3 + 4*epsilon + pow(epsilon,2));
+    const double buffer = 0.07; // Add 7% buffer for soft interactions
+    const double h_max = h_max_theory * (1 + buffer);
+    const double h_min = 0.0;  // Starting from 0 since we're taking abs(h)
 
     MatrixXd current_positions(N,2);
     current_positions.col(0) = X.col(1);
@@ -280,24 +284,20 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         throw std::runtime_error("Could not open output file: " + filename);
     }
 
-    // Vector to store h, psi, t values for current chunk
+    // Vector to store h, t values for current chunk
     std::vector<double> h_values;
     std::vector<double> psi_values;
     std::vector<double> t_values;
     h_values.reserve(chunk_size);
-    psi_values.reserve(chunk_size);
     t_values.reserve(chunk_size);
 
-    // Calculate initial h, psi values and add to chunk
+    // Calculate initial h, t values and add to chunk
     h_values.push_back(calculate_h(current_positions));
-    psi_values.push_back(calculate_psi(current_phi));
+    t_values.push_back(0);
 
     // Integrate the SDE
     double t = 0; 
     for (size_t i=0; i<nsamp; ++i) {
-        // Add current time to t_values
-        t_values.push_back(t);
-
         // Get the active force on each disk
         MatrixXd active_force = get_active_force(current_phi,f,N);
 
@@ -318,10 +318,10 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         }
 
         // Compute Runge-Kutta coefficients
-        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma, D0)+active_force) + 
-                      ((dW-Sk*sqrt(h)).array()*b(current_positions, D0).array()).matrix();
-        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma, D0)+active_force) + 
-                      ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, D0).array()).matrix();
+        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma)+active_force) + 
+                      ((dW-Sk*sqrt(h)).array()*b(current_positions, T).array()).matrix();
+        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma)+active_force) + 
+                      ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, T).array()).matrix();
 
         // Update positions
         current_positions += (K1+K2)/2;
@@ -329,20 +329,24 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
         // Calculate h, psi and add to current chunk
         double h_value = calculate_h(current_positions);
-        double psi_value = calculate_psi(current_phi);
+        validate_h_value(h_value, h_min, h_max);
         h_values.push_back(h_value);
-        psi_values.push_back(psi_value);
+        t_values.push_back(t);
 
         // If chunk is full, write to file and clear
         if (h_values.size() >= chunk_size) {
             for (size_t i=0; i<h_values.size(); i++) {
-                outfile << t_values[i] << "," << h_values[i] << "," << psi_values[i] << "\n";
+                outfile << t_values[i] << "," << h_values[i] << "\n";
             }
             outfile.flush();
+
+            // Clear vectors
             h_values.clear();
-            psi_values.clear();
+            t_values.clear();
+
+            // Reserve space for next chunk
             h_values.reserve(chunk_size);
-            psi_values.reserve(chunk_size);
+            t_values.reserve(chunk_size);
         }
 
         // Progress update
@@ -351,9 +355,9 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         }
     }
 
-    // Write any remaining h and psi values
+    // Write any remaining values at the end
     for (size_t i=0; i<h_values.size(); i++) {
-        outfile << t << "," << h_values[i] << "," << psi_values[i] << "\n";
+        outfile << t_values[i] << "," << h_values[i] << "\n";
     }
     outfile.close();
 }
@@ -368,8 +372,8 @@ int main() {
     const double Tmax = 100000;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
-    const double D0 = 0.5;
-    const std::vector<double> f_vals = {0, 0.5, 1, 1.2, 1.5}; // Different f values 0,0.5,1,1.2,1.5,  1.7,2,3,4,5
+    const double T = 0.5;
+    const std::vector<double> f_vals = {0,0.5,1,1.5,5}; // Different f values to run in parallel
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -390,13 +394,13 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
                 
-                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/varying_f_epsilon=0.25/";
+                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/activity effect on h trajectories, epsilon=0.25/";
                 std::stringstream filename;
-                filename << N << "_particles_epsilon=" << epsilon << "_f=" << f << "_h_psi_values.csv";
+                filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << ".csv";
                 std::string output_file = dpath + filename.str();
 
                 solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
-                                      rng, output_file, D0, f, "I", chunk_size);
+                                      rng, output_file, T, f, "I", chunk_size);
 
                 #pragma omp critical
                 {
