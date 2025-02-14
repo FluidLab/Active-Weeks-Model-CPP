@@ -161,13 +161,14 @@ double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int
     double wall_dist = sigma*std::pow(2,1.0/6.0)/2 + R - r(hopping_disk_id);
     edge_distances.push_back(wall_dist);
 
-    // Calculate cage length lc as average of all distances
-    double lc = 0;
+    // Calculate average distance between a particle and the edge of its nearest neighbors (other disks and wall)
+    double rnn = 0;
     for (const double& dist : edge_distances) {
-        lc += dist;
+        rnn += dist;
     }
-    lc /= edge_distances.size();
-    
+    rnn /= edge_distances.size();
+    double lc;
+    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is nearest neighbor edge distance minus (effective) radius of particles (equivalently: NN center distance minus effective sigma)
     return lc;
 }
 
@@ -415,7 +416,7 @@ void runsim_calc_Fh_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     double avg_lc = lc_sum / lc_count;
     #pragma omp critical
     {
-        std::cout << "Average cage length (lc) for f = " << f << ": " << avg_lc << std::endl;
+        std::cout << "Average cage length (lc) for epsilon = " << epsilon << ", f = " << f << ": " << avg_lc << std::endl;
     }
     outfile.close();
 }
@@ -432,9 +433,7 @@ int main() {
     const double int_strength = 40;
     const double T = 0.5;
     const double Dr = 0.5; // rotational diffusion coefficient
-    //Eigen::VectorXd f_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // Different f values to run in parallel - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    Eigen::VectorXd f_vals(3);
-    f_vals << 0, 2, 5;
+    Eigen::VectorXd f_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // Different f values to run in parallel - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -466,14 +465,14 @@ int main() {
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for f = " << f << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << std::endl;
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for f = " << f << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", f = " << f << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }
