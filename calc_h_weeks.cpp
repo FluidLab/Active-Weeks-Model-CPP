@@ -367,13 +367,14 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 0.25;
+    const double epsilon = 1;
     const double v = 0.0;
-    const double Tmax = 100000;
+    const double Tmax = 10000;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
     const double T = 0.5;
-    const std::vector<double> f_vals = {0,0.5,1,1.5,5}; // Different f values to run in parallel
+    const double Dr = 0.5; // rotational diffusion coefficient
+    const std::vector<double> f_vals = {0,1,5}; // Different f values to run in parallel
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -394,7 +395,7 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
                 
-                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/activity effect on h trajectories, epsilon=0.25/";
+                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
                 std::stringstream filename;
                 filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << ".csv";
                 std::string output_file = dpath + filename.str();
@@ -405,14 +406,14 @@ int main() {
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for f = " << f << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << std::endl;
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for f = " << f << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", f = " << f << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }

@@ -494,14 +494,14 @@ int main() {
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for f = " << f << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << std::endl;
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for f = " << f << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", f = " << f << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }
