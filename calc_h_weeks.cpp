@@ -277,8 +277,8 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         current_phi(disk_i) = 2*M_PI*rng.uniform();
     }
 
-    // Open output file
-    std::ofstream outfile(filename);
+    // Open output file in binary mode
+    std::ofstream outfile(filename, std::ios::binary);
     if (!outfile.is_open()) {
         throw std::runtime_error("Could not open output file: " + filename);
     }
@@ -334,9 +334,22 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
         // If chunk is full, write to file and clear
         if (h_values.size() >= chunk_size) {
+            // Create a buffer for the data (reduces number of write operations)
+            std::vector<char> buffer(2 * h_values.size() * sizeof(float)); // Space for t and h values
+            char* ptr = buffer.data();
+            
+            // Convert to float and copy to buffer
             for (size_t i=0; i<h_values.size(); i++) {
-                outfile << t_values[i] << "," << h_values[i] << "\n";
+                float t_float = static_cast<float>(t_values[i]);
+                float h_float = static_cast<float>(h_values[i]);
+                std::memcpy(ptr, &t_float, sizeof(float));
+                ptr += sizeof(float);
+                std::memcpy(ptr, &h_float, sizeof(float));
+                ptr += sizeof(float);
             }
+            
+            // Write the entire buffer at once
+            outfile.write(buffer.data(), buffer.size());
             outfile.flush();
 
             // Clear vectors
@@ -356,7 +369,10 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
     // Write any remaining values at the end
     for (size_t i=0; i<h_values.size(); i++) {
-        outfile << t_values[i] << "," << h_values[i] << "\n";
+        float t_float = static_cast<float>(t_values[i]);
+        float h_float = static_cast<float>(h_values[i]);
+        outfile.write(reinterpret_cast<char*>(&t_float), sizeof(float));
+        outfile.write(reinterpret_cast<char*>(&h_float), sizeof(float));
     }
     outfile.close();
 }
@@ -366,39 +382,42 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 0.25;
+    //const double epsilon = 0.25; // uncomment for constant-epsilon sims
+    const std::vector<double> eps_vals = {1.3,2.1,3.4,5.5,8.9,14,23,38,62,100}; //{0.01,0.016,0.026,0.043,0.07,0.11,0.18,0.3,0.48,0.78}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = 10000;
-    const int nsamp = (int)1e8;
+    const double Tmax = 100000;
+    const int nsamp = (int)1e9;
     const double int_strength = 40;
     const double T = 0.5;
     const double f = 1;
-    //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    const double tau_p = 0.0002; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {2,3,4,5}; // Different tau_p values to run in parallel
-    const int chunk_size = (int)1e7; // Process 10 million steps at a time
+    //const std::vector<double> tau_p_vals = {2,3,4,5}; // uncomment for different values to run in parallel
+    const int chunk_size = (int)5e7; // Process 50 million steps at a time
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < tau_p_vals.size(); i++) {
+    //for(size_t i = 0; i < tau_p_vals.size(); i++) {
+    for(size_t i = 0; i < eps_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double tau_p = tau_p_vals[i];
+            //double tau_p = tau_p_vals[i];
+            double epsilon = eps_vals[i];
             
             #pragma omp critical
             {
                 std::cout << "Thread " << omp_get_thread_num() 
-                          << " starting calculation for f = " << f << ", taup = " << tau_p << std::endl;
+                          << " starting calculation for epsilon = " << epsilon << ", taup = " << tau_p << std::endl;
             }
 
             try {
                 MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
                 
-                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/h trajectories, vary taup 24-02-2025/";
+                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
                 std::stringstream filename;
-                filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << ".csv";
+                filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << ".bin";
                 std::string output_file = dpath + filename.str();
 
                 solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
@@ -407,14 +426,14 @@ int main() {
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << ", taup =" << tau_p << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", taup =" << tau_p << std::endl;
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for epsilon = " << epsilon << ", f = " << f << ", taup =" << tau_p << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", taup =" << tau_p << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }
