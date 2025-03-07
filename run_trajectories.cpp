@@ -207,8 +207,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         //populate (i,i) elements with zeros (distance from disk to itself is zero)
         distances(i,i) = 0;
 
-        // each disk's nearest distance to the enclosure is R-r
-        wall_dist(i) = sigma*std::pow(2,1.0/6.0)/2+R-r(i); // replace sigma by sigma*2^(1/6)?
+        // each disk's nearest distance to the extent of the potential felt by the wall is r_eff+R-r
+        wall_dist(i) = sigma * std::pow(2,1.0/6.0) / 2 + R - r(i);
     }
 
     // loop over all unique disk pairs
@@ -222,7 +222,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         }
     }
 
-    // calculate x and y values of the force produced by the various WCA potentials, scaled by kT
+    // calculate x and y values of the force produced by the various WCA potentials
     MatrixXd forces(N,2); 
     for (size_t disk_i=0; disk_i < N; ++disk_i){
         double sum_grad_Ux=0;
@@ -250,6 +250,46 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         forces(disk_i, 1) = -sum_grad_Uy;
     }
     return forces;
+}
+
+// Calculate the total potential energy (sum of WCA potentials) stored in the current state
+double get_potential_energy(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
+    const int N = current_state.rows();
+    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    VectorXd x = current_state.col(0);
+    VectorXd y = current_state.col(1);
+    VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
+
+    double total_energy = 0.0;
+
+    // Calculate disk-disk interaction energies
+    for (int disk_i = 0; disk_i < N; ++disk_i) {
+        for (int disk_j = disk_i + 1; disk_j < N; ++disk_j) {
+            // Calculate distance between disks
+            double r_ij = std::sqrt(std::pow((x(disk_i) - x(disk_j)), 2) + 
+                                   std::pow((y(disk_i) - y(disk_j)), 2));
+                                   
+            // Apply WCA potential if disks are within range
+            if (r_ij <= sigma * std::pow(2, 1.0/6.0)) {
+                double energy_ij = 4 * int_strength * (std::pow((sigma / r_ij), 12) - 
+                                                        std::pow((sigma / r_ij), 6)) + 
+                                  int_strength;
+                total_energy += energy_ij;
+            }
+        }
+        
+        // Calculate disk-wall interaction energy
+        // each disk's nearest distance to the enclosure potential is r_eff+R-r
+        double dist_to_wall = sigma * std::pow(2, 1.0/6.0) / 2 + R - r(disk_i);
+        if (dist_to_wall <= sigma * std::pow(2, 1.0/6.0)) {
+            double energy_wall = 4 * int_strength * (std::pow((sigma / dist_to_wall), 12) - 
+                                                     std::pow((sigma / dist_to_wall), 6)) + 
+                               int_strength;
+            total_energy += energy_wall;
+        }
+    }
+    
+    return total_energy;
 }
 
 // Given the phi values from phi_active(), calculate the active force on each disk at time t
@@ -308,7 +348,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     const int N = X.rows();
     const double sigma = 2*X(0,0);
     const double h = Tmax/nsamp;
-    const double Dr = 3*T/pow(sigma,2);
+    const double Dr = 3*T/pow(sigma,2); // really, should be sigma_effective for consistency. Will change to vary Dr soon anyways
 
     MatrixXd current_positions(N,2);
     current_positions.col(0) = X.col(1);
@@ -462,17 +502,20 @@ int main() {
     const int nsamp = (int)1e8;
     const double int_strength = 40;
     const double T = 0.5;
-    const std::vector<double> f_vals = {0}; // Different f values to run in parallel
+    const double f = 1;
+    //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
+    const std::vector<double> tau_p_vals = {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}; // Different tau_p values to run in parallel
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < f_vals.size(); i++) {
+    for(size_t i = 0; i < tau_p_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double f = f_vals[i];
+            double tau_p = tau_p_vals[i];
             
             #pragma omp critical
             {
