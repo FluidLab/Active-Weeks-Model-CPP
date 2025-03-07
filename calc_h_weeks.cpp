@@ -159,8 +159,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         //populate (i,i) elements with zeros (distance from disk to itself is zero)
         distances(i,i) = 0;
 
-        // each disk's nearest distance to the enclosure is R-r
-        wall_dist(i) = sigma*std::pow(2,1.0/6.0)/2+R-r(i); // replace sigma by sigma*2^(1/6)?
+        // each disk's nearest distance to the extent of the potential felt by the wall is r_eff+R-r
+        wall_dist(i) = sigma * std::pow(2,1.0/6.0) / 2 + R - r(i);
     }
 
     // loop over all unique disk pairs
@@ -174,7 +174,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         }
     }
 
-    // calculate x and y values of the force produced by the various WCA potentials, scaled by kT
+    // calculate x and y values of the force produced by the various WCA potentials
     MatrixXd forces(N,2); 
     for (size_t disk_i=0; disk_i < N; ++disk_i){
         double sum_grad_Ux=0;
@@ -202,6 +202,46 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         forces(disk_i, 1) = -sum_grad_Uy;
     }
     return forces;
+}
+
+// Calculate the total potential energy (sum of WCA potentials) stored in the current state
+double get_potential_energy(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
+    const int N = current_state.rows();
+    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    VectorXd x = current_state.col(0);
+    VectorXd y = current_state.col(1);
+    VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
+
+    double total_energy = 0.0;
+
+    // Calculate disk-disk interaction energies
+    for (int disk_i = 0; disk_i < N; ++disk_i) {
+        for (int disk_j = disk_i + 1; disk_j < N; ++disk_j) {
+            // Calculate distance between disks
+            double r_ij = std::sqrt(std::pow((x(disk_i) - x(disk_j)), 2) + 
+                                   std::pow((y(disk_i) - y(disk_j)), 2));
+                                   
+            // Apply WCA potential if disks are within range
+            if (r_ij <= sigma * std::pow(2, 1.0/6.0)) {
+                double energy_ij = 4 * int_strength * (std::pow((sigma / r_ij), 12) - 
+                                                        std::pow((sigma / r_ij), 6)) + 
+                                  int_strength;
+                total_energy += energy_ij;
+            }
+        }
+        
+        // Calculate disk-wall interaction energy
+        // each disk's nearest distance to the enclosure potential is r_eff+R-r
+        double dist_to_wall = sigma * std::pow(2, 1.0/6.0) / 2 + R - r(disk_i);
+        if (dist_to_wall <= sigma * std::pow(2, 1.0/6.0)) {
+            double energy_wall = 4 * int_strength * (std::pow((sigma / dist_to_wall), 12) - 
+                                                     std::pow((sigma / dist_to_wall), 6)) + 
+                               int_strength;
+            total_energy += energy_wall;
+        }
+    }
+    
+    return total_energy;
 }
 
 // Given the phi values from phi_active(), calculate the active force on each disk at time t
@@ -283,16 +323,12 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         throw std::runtime_error("Could not open output file: " + filename);
     }
 
-    // Vector to store h, t values for current chunk
+    // Vector to store h values for current chunk
     std::vector<double> h_values;
-    std::vector<double> psi_values;
-    std::vector<double> t_values;
     h_values.reserve(chunk_size);
-    t_values.reserve(chunk_size);
 
-    // Calculate initial h, t values and add to chunk
+    // Calculate initial h value and add to chunk
     h_values.push_back(calculate_h(current_positions));
-    t_values.push_back(0);
 
     // Integrate the SDE
     double t = 0; 
@@ -326,24 +362,20 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         current_positions += (K1+K2)/2;
         t += h;
 
-        // Calculate h, psi and add to current chunk
+        // Calculate h and add to current chunk
         double h_value = calculate_h(current_positions);
         validate_h_value(h_value, h_min, h_max);
         h_values.push_back(h_value);
-        t_values.push_back(t);
 
         // If chunk is full, write to file and clear
         if (h_values.size() >= chunk_size) {
             // Create a buffer for the data (reduces number of write operations)
-            std::vector<char> buffer(2 * h_values.size() * sizeof(float)); // Space for t and h values
+            std::vector<char> buffer(h_values.size() * sizeof(float)); // Space for h values
             char* ptr = buffer.data();
             
             // Convert to float and copy to buffer
             for (size_t i=0; i<h_values.size(); i++) {
-                float t_float = static_cast<float>(t_values[i]);
                 float h_float = static_cast<float>(h_values[i]);
-                std::memcpy(ptr, &t_float, sizeof(float));
-                ptr += sizeof(float);
                 std::memcpy(ptr, &h_float, sizeof(float));
                 ptr += sizeof(float);
             }
@@ -352,13 +384,11 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
             outfile.write(buffer.data(), buffer.size());
             outfile.flush();
 
-            // Clear vectors
+            // Clear h vector
             h_values.clear();
-            t_values.clear();
 
             // Reserve space for next chunk
             h_values.reserve(chunk_size);
-            t_values.reserve(chunk_size);
         }
 
         // Progress update
@@ -369,9 +399,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
     // Write any remaining values at the end
     for (size_t i=0; i<h_values.size(); i++) {
-        float t_float = static_cast<float>(t_values[i]);
         float h_float = static_cast<float>(h_values[i]);
-        outfile.write(reinterpret_cast<char*>(&t_float), sizeof(float));
         outfile.write(reinterpret_cast<char*>(&h_float), sizeof(float));
     }
     outfile.close();
@@ -383,14 +411,14 @@ int main() {
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
     //const double epsilon = 0.25; // uncomment for constant-epsilon sims
-    const std::vector<double> eps_vals = {1.3,2.1,3.4,5.5,8.9,14,23,38,62,100}; //{0.01,0.016,0.026,0.043,0.07,0.11,0.18,0.3,0.48,0.78}; // uncomment for different values to run in parallel
+    const std::vector<double> eps_vals = {0.38,0.55,0.78,1.1,1.6,2.3,3.4,4.8,7,10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089,0.13,0.18,0.26}; // uncomment for different values to run in parallel
     const double v = 0.0;
     const double Tmax = 100000;
     const int nsamp = (int)1e9;
     const double int_strength = 40;
     const double T = 0.5;
     const double f = 1;
-    const double tau_p = 0.0002; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
     //const std::vector<double> tau_p_vals = {2,3,4,5}; // uncomment for different values to run in parallel
     const int chunk_size = (int)5e7; // Process 50 million steps at a time
@@ -415,7 +443,8 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
                 
-                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
+                //std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/caging time h trajectories, vary epsilon and taup/";
                 std::stringstream filename;
                 filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << ".bin";
                 std::string output_file = dpath + filename.str();
