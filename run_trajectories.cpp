@@ -343,12 +343,11 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
 // Outputs: Length nsamp vector of h values for the system
 void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon, 
                            double int_strength, ThreadsafeRNG& rng, const std::string& filename,
-                           double T=0.5, double f=0, std::string IntegrationType="I", 
+                           double T=0.5, double f=0, double tau_p=1, std::string IntegrationType="I", 
                            int chunk_size=1000000) {    
     const int N = X.rows();
     const double sigma = 2*X(0,0);
     const double h = Tmax/nsamp;
-    const double Dr = 3*T/pow(sigma,2); // really, should be sigma_effective for consistency. Will change to vary Dr soon anyways
 
     MatrixXd current_positions(N,2);
     current_positions.col(0) = X.col(1);
@@ -411,7 +410,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         MatrixXd dW(N,2);
         for (int disk_i = 0; disk_i<N; ++disk_i) {
             // Update phi
-            double dphi = sqrt(2*Dr*h) * rng.normal();
+            double dphi = sqrt(h/tau_p) * rng.normal(); // Wrote dphi in terms of tau_p, rather than rotational diffusion coefficient Dr
             current_phi(disk_i) += dphi;
 
             // Draw Wiener process increments
@@ -498,14 +497,15 @@ int main() {
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
     const double epsilon = 0.06;
     const double v = 0.0;
-    const double Tmax = 100000;
+    const double Tmax = (int)1e4;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
-    const double T = 0.5;
+    const double T = 0.0; // thermal or athermal 0.0
     const double f = 1;
+    //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}; // Different tau_p values to run in parallel
+    const std::vector<double> tau_p_vals = {0.001, 0.01, 0.1, 1, 3, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -520,31 +520,31 @@ int main() {
             #pragma omp critical
             {
                 std::cout << "Thread " << omp_get_thread_num() 
-                          << " starting calculation for f = " << f << std::endl;
+                          << " starting calculation for f = " << f << ", taup = " << tau_p << std::endl;
             }
 
             try {
                 MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
                 
-                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/trajectories_fish_school_params 20-01-2025/";
+                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/athermal_trajectories_fish_school_params_18_06_2025/";
                 std::stringstream filename;
-                filename << N << "_particles_epsilon=" << epsilon << "_f=" << f << "_trajectories.csv";
+                filename << "T=" << T << "_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_trajectories.csv";
                 std::string output_file = dpath + filename.str();
 
                 solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
-                                      rng, output_file, T, f, "I", chunk_size);
+                                      rng, output_file, T, f, tau_p, "I", chunk_size);
 
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << ", taup = " << tau_p << std::endl;
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for epsilon = " << epsilon << ", f = " << f << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", f = " << f << ", taup = " << tau_p << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }
