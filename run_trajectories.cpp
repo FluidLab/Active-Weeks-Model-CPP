@@ -366,7 +366,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     }
 
     // Write header
-    outfile << "t,h,A,M,P";
+    outfile << "h,A,M,P";
     for (int i = 0; i < N; i++) {
         outfile << ",x" << i << ",y" << i << ",phi" << i;
     }
@@ -377,7 +377,6 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     std::vector<double> A_values;
     std::vector<double> M_values;
     std::vector<double> P_values;
-    std::vector<double> t_values;
     std::vector<MatrixXd> positions;  // Store positions for each timestep
     std::vector<VectorXd> phi_values;
     h_values.reserve(chunk_size);
@@ -385,7 +384,6 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     A_values.reserve(chunk_size);
     M_values.reserve(chunk_size);
     P_values.reserve(chunk_size);
-    t_values.reserve(chunk_size);
     positions.reserve(chunk_size);
 
     // Calculate initial h, psi values and add to chunk
@@ -393,7 +391,6 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     A_values.push_back(calculate_A(current_positions));
     M_values.push_back(calculate_M(current_positions, current_phi));
     P_values.push_back(calculate_P(current_phi));
-    t_values.push_back(0);
     positions.push_back(current_positions);
     phi_values.push_back(current_phi);
 
@@ -438,14 +435,13 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         A_values.push_back(A_value);
         M_values.push_back(M_value);
         P_values.push_back(P_value);
-        t_values.push_back(t);
         positions.push_back(current_positions);
         phi_values.push_back(current_phi);
 
         // When chunk is full, write to file and clear
         if (h_values.size() >= chunk_size) {
             for (size_t i = 0; i < h_values.size(); i++) {
-                outfile << t_values[i] << "," << h_values[i] << "," << A_values[i] << "," << M_values[i] << "," << P_values[i];
+                outfile << h_values[i] << "," << A_values[i] << "," << M_values[i] << "," << P_values[i];
                 // Write positions, angles for each particle
                 for (int p = 0; p < N; p++) {
                     outfile << "," << positions[i](p,0) << "," << positions[i](p,1) << "," << phi_values[i](p);
@@ -459,7 +455,6 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
             A_values.clear();
             M_values.clear();
             P_values.clear();
-            t_values.clear();
             positions.clear();
             phi_values.clear();
 
@@ -468,7 +463,6 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
             A_values.reserve(chunk_size);
             M_values.reserve(chunk_size);
             P_values.reserve(chunk_size);
-            t_values.reserve(chunk_size);
             positions.reserve(chunk_size);
             phi_values.reserve(chunk_size);
         }
@@ -481,7 +475,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
     // Write any remaining values at the end
     for (size_t i = 0; i < h_values.size(); i++) {
-        outfile << t_values[i] << "," << h_values[i] << "," << A_values[i] << "," << M_values[i] << "," << P_values[i];
+        outfile << h_values[i] << "," << A_values[i] << "," << M_values[i] << "," << P_values[i];
         for (int p = 0; p < N; p++) {
             outfile << "," << positions[i](p,0) << "," << positions[i](p,1) << "," << phi_values[i](p);
         }
@@ -495,7 +489,7 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 0.06;
+    const double epsilon = 0.55;
     const double v = 0.0;
     const double Tmax = (int)1e4;
     const int nsamp = (int)1e8;
@@ -505,7 +499,7 @@ int main() {
     //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.001, 0.01, 0.1, 1, 3, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
+    const std::vector<double> tau_p_vals = {0.001, 1, 3, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -526,7 +520,7 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
                 
-                std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/athermal_trajectories_fish_school_params_18_06_2025/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/athermal_trajectories_fish_school_params_18_06_2025/";
                 std::stringstream filename;
                 filename << "T=" << T << "_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_trajectories.csv";
                 std::string output_file = dpath + filename.str();
