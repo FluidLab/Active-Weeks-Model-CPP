@@ -287,7 +287,7 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
     return Sk;  
 }
 
-// Uses the strong order 0.5 Euler method from SDEs to solve dynamics of the system of equations
+// Uses the strong order 1 Runge-Kutta method from SDEs to solve dynamics of the system of equations
 //                          dX = a(t,X)dt+b(t,X)dW,
 // only saving the h values of the 3-particle system rather than the whole trajectories.
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
@@ -410,29 +410,29 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    //const double epsilon = 0.25; // uncomment for constant-epsilon sims
-    const std::vector<double> eps_vals = {0.38,0.55,0.78,1.1,1.6,2.3,3.4,4.8,7,10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089,0.13,0.18,0.26}; // uncomment for different values to run in parallel
+    const double epsilon = 0.062; // uncomment for constant-epsilon sims
+    //const std::vector<double> eps_vals = {1.1,1.6,2.3,3.4,4.8,7,10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = 100000;
-    const int nsamp = (int)1e9;
+    const double Tmax = (int)2e5; // Change depending on the epsilon value!
+    const int nsamp = (int)2e9;
     const double int_strength = 40;
     const double T = 0.5;
     const double f = 1;
-    const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    //const double tau_p = 5; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    //const std::vector<double> tau_p_vals = {2,3,4,5}; // uncomment for different values to run in parallel
+    const std::vector<double> tau_p_vals = {0.0002,1}; // uncomment for different values to run in parallel
     const int chunk_size = (int)5e7; // Process 50 million steps at a time
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    //for(size_t i = 0; i < tau_p_vals.size(); i++) {
-    for(size_t i = 0; i < eps_vals.size(); i++) {
+    for(size_t i = 0; i < tau_p_vals.size(); i++) {
+    //for(size_t i = 0; i < eps_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            //double tau_p = tau_p_vals[i];
-            double epsilon = eps_vals[i];
+            double tau_p = tau_p_vals[i];
+            //double epsilon = eps_vals[i];
             
             #pragma omp critical
             {

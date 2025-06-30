@@ -335,7 +335,7 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
     return Sk;  
 }
 
-// Uses the strong order 0.5 Euler method from SDEs to solve dynamics of the system of equations
+// Uses the strong order 1 Runge-Kutta method from SDEs to solve dynamics of the system of equations
 //                          dX = a(t,X)dt+b(t,X)dW,
 // only saving the h values of the 3-particle system rather than the whole trajectories.
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
@@ -489,9 +489,9 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 0.55;
+    const double epsilon = 0.06;
     const double v = 0.0;
-    const double Tmax = (int)1e4;
+    const double Tmax = (int)1e5;
     const int nsamp = (int)1e8;
     const double int_strength = 40;
     const double T = 0.0; // thermal or athermal 0.0
@@ -499,7 +499,7 @@ int main() {
     //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.001, 1, 3, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
+    const std::vector<double> tau_p_vals = {1}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
