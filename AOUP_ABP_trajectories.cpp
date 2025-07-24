@@ -162,6 +162,20 @@ double calculate_P(const VectorXd& current_angles) {
     return polarization;
 }
 
+/* Function to extract angles from force vectors for AOUP model */
+VectorXd extract_phi_from_forces(const MatrixXd& active_forces) {
+    const int N = active_forces.rows();
+    VectorXd phi_extracted(N);
+    
+    for (int i = 0; i < N; ++i) {
+        double fx = active_forces(i, 0);
+        double fy = active_forces(i, 1);
+        phi_extracted(i) = std::atan2(fy, fx);
+    }
+    
+    return phi_extracted;
+}
+
 ////////////////////// Function to calculate h at a given time ////////////////////////////////////////////////////
 double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
     // Get indices of non-hopping disks
@@ -385,36 +399,41 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         throw std::runtime_error("Could not open output file: " + filename);
     }
 
-    /* Write header */
+    // Write header
     outfile << "h,A,M,P";
     for (int i = 0; i < N; i++) {
-        outfile << ",x" << i << ",y" << i << ",phi" << i << ",state" << i;
+        outfile << ",x" << i << ",y" << i << ",phi" << i;
     }
     outfile << "\n";
 
-    /* Vectors to store calculated values for current chunk */
+    // Vector to store calculated values for current chunk
     std::vector<double> h_values;
     std::vector<double> A_values;
     std::vector<double> M_values;
     std::vector<double> P_values;
-    std::vector<MatrixXd> positions;
+    std::vector<MatrixXd> positions;  // Store positions for each timestep
     std::vector<VectorXd> phi_values;
-    std::vector<std::vector<int>> state_values;
     h_values.reserve(chunk_size);
     A_values.reserve(chunk_size);
     M_values.reserve(chunk_size);
     P_values.reserve(chunk_size);
     positions.reserve(chunk_size);
     phi_values.reserve(chunk_size);
-    state_values.reserve(chunk_size);
 
-    /* Calculate initial values and add to chunk */
+    // Initial calculations of tracked values over sim
+    VectorXd initial_phi;
+    if (model_type == "ABP") {
+        initial_phi = current_phi;
+    } else if (model_type == "AOUP") {
+        initial_phi = extract_phi_from_forces(current_active_forces);
+    }
+
     h_values.push_back(calculate_h(current_positions));
     A_values.push_back(calculate_A(current_positions));
-    M_values.push_back(calculate_M(current_positions, current_phi));
-    P_values.push_back(calculate_P(current_phi));
+    M_values.push_back(calculate_M(current_positions, initial_phi));
+    P_values.push_back(calculate_P(initial_phi));
     positions.push_back(current_positions);
-    phi_values.push_back(current_phi);
+    phi_values.push_back(initial_phi);
 
     // Integrate the SDE
     double t = 0;
@@ -462,48 +481,63 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         current_positions += (K1+K2)/2;
         t += h;
 
-        /* Calculate values and add to current chunk */
+        // Calculate values and add to current chunk
         double h_value = calculate_h(current_positions);
         double A_value = calculate_A(current_positions);
-        double M_value = calculate_M(current_positions, current_phi);
-        double P_value = calculate_P(current_phi);
+
+        // Calculate M and P using appropriate phi values
+        double M_value, P_value;
+        if (model_type == "ABP") {
+            M_value = calculate_M(current_positions, current_phi);
+            P_value = calculate_P(current_phi);
+        } else if (model_type == "AOUP") {
+            VectorXd phi_from_forces = extract_phi_from_forces(current_active_forces);
+            M_value = calculate_M(current_positions, phi_from_forces);
+            P_value = calculate_P(phi_from_forces);
+        }
+
+        // When storing phi_values for output:
+        VectorXd phi_for_output;
+        if (model_type == "ABP") {
+            phi_for_output = current_phi;
+        } else if (model_type == "AOUP") {
+            phi_for_output = extract_phi_from_forces(current_active_forces);
+        }
+
         h_values.push_back(h_value);
         A_values.push_back(A_value);
         M_values.push_back(M_value);
         P_values.push_back(P_value);
         positions.push_back(current_positions);
-        phi_values.push_back(current_phi);
+        phi_values.push_back(phi_for_output);
 
-        /* When chunk is full, write to file and clear */
+        // When chunk is full, write to file and clear
         if (h_values.size() >= chunk_size) {
-            for (size_t j = 0; j < h_values.size(); j++) {
-                outfile << h_values[j] << "," << A_values[j] << "," << M_values[j] << "," << P_values[j];
-                /* Write positions, angles, and states for each particle */
+            for (size_t i = 0; i < h_values.size(); i++) {
+                outfile << h_values[i] << "," << A_values[i] << "," << M_values[i] << "," << P_values[i];
+                // Write positions, angles for each particle
                 for (int p = 0; p < N; p++) {
-                    outfile << "," << positions[j](p,0) << "," << positions[j](p,1) 
-                           << "," << phi_values[j](p) << "," << state_values[j][p];
+                    outfile << "," << positions[i](p,0) << "," << positions[i](p,1) << "," << phi_values[i](p);
                 }
                 outfile << "\n";
             }
             outfile.flush();
 
-            /* Clear vectors */
+            // Clear vectors
             h_values.clear();
             A_values.clear();
             M_values.clear();
             P_values.clear();
             positions.clear();
             phi_values.clear();
-            state_values.clear();
 
-            /* Reserve space for next chunk */
+            // Reserve space for next chunk
             h_values.reserve(chunk_size);
             A_values.reserve(chunk_size);
             M_values.reserve(chunk_size);
             P_values.reserve(chunk_size);
             positions.reserve(chunk_size);
             phi_values.reserve(chunk_size);
-            state_values.reserve(chunk_size);
         }
 
         // Progress update
@@ -512,12 +546,11 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         }
     }
 
-    /* Write any remaining values at the end */
+    // Write any remaining values at the end
     for (size_t i = 0; i < h_values.size(); i++) {
         outfile << h_values[i] << "," << A_values[i] << "," << M_values[i] << "," << P_values[i];
         for (int p = 0; p < N; p++) {
-            outfile << "," << positions[i](p,0) << "," << positions[i](p,1) 
-                   << "," << phi_values[i](p) << "," << state_values[i][p];
+            outfile << "," << positions[i](p,0) << "," << positions[i](p,1) << "," << phi_values[i](p);
         }
         outfile << "\n";
     }
@@ -529,19 +562,18 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 100;
+    const double epsilon = 1;
     const double v = 0.0;
-    const double Tmax = (int)1e5;
-    const int nsamp = (int)1e8;
+    const double Tmax = (int)1e4;
+    const int nsamp = (int)1e7;
     const double int_strength = 40;
     const double T = 0.0; // thermal or athermal 0.0
     const double f = 1;
     const std::string model_type = "AOUP"; // or "ABP"
-    const double D_f = 0.5; // Diffusion coefficient for self-propulsion velocity noise in AOUP
     //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.01, 1, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
+    const std::vector<double> tau_p_vals = {0.01, 0.1, 1, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -552,6 +584,7 @@ int main() {
         if (!had_error) {
             ThreadsafeRNG rng;
             double tau_p = tau_p_vals[i];
+            const double D_f = pow(f,2) * 2 * tau_p / M_PI; //pow(f,2)/(3*tau_p); // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
             
             #pragma omp critical
             {
@@ -565,7 +598,7 @@ int main() {
                 std::string dpath="Z:/Jared/Data/weeks_model_desktop/AOUP_trajectories_22_07_2025/";
                 std::stringstream filename;
                 filename << "T=" << T << "_epsilon=" << epsilon << "_f=" << f 
-                        << "_taup=" << tau_p << "_model=" << model_type << "_trajectories.csv";
+                        << "_taup=" << tau_p << "_model=" << model_type << "_same_stationary_force_norms_trajectories.csv";
                 std::string output_file = dpath + filename.str();
 
                 solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
@@ -575,14 +608,16 @@ int main() {
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for epsilon = " << epsilon << ", f = " << f << ", taup = " << tau_p << ", model " << model_type << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", f = " << f 
+                              << ", taup = " << tau_p << ", model " << model_type << std::endl;
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for epsilon = " << epsilon << ", f = " << f << ", taup = " << tau_p << ", model " << model_type << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", f = " << f 
+                             << ", taup = " << tau_p << ", model " << model_type << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }
