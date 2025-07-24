@@ -365,7 +365,7 @@ int main() {
                           << " starting calculation for f = " << f << std::endl;
             }
 
-            MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
+            MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
             std::vector<std::vector<std::tuple<double, double, double>>> brownian = 
                 solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, rng, T, f, "I");
 

@@ -51,6 +51,7 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
+/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r to avoid overlaps */
 MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
     double R = N*r + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
@@ -561,7 +562,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 int main() {
     // Simulation parameters
     const int N = 3;
-    const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
+    const double r = 1.0/std::pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
     const double epsilon = 1;
     const double v = 0.0;
     const double Tmax = (int)1e4;
@@ -573,7 +574,7 @@ int main() {
     //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.01, 0.1, 1, 5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
+    const std::vector<double> tau_p_vals = {1}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
@@ -584,7 +585,7 @@ int main() {
         if (!had_error) {
             ThreadsafeRNG rng;
             double tau_p = tau_p_vals[i];
-            const double D_f = pow(f,2) * 2 * tau_p / M_PI; //pow(f,2)/(3*tau_p); // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
+            const double D_f = std::pow(f,2) * 2 * tau_p / M_PI; //std::pow(f,2)/(3*tau_p); // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
             
             #pragma omp critical
             {
@@ -593,7 +594,7 @@ int main() {
             }
 
             try {
-                MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
+                MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
                 
                 std::string dpath="Z:/Jared/Data/weeks_model_desktop/AOUP_trajectories_22_07_2025/";
                 std::stringstream filename;

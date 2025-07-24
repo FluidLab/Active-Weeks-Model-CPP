@@ -597,7 +597,7 @@ int main() {
                 }
                 
                 try {
-                    MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
+                    MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
                    
                     std::string dpath="Z:/Jared/Data/weeks_model_desktop/athermal_run_tumble_trajectories_30_06_2025/";
                     std::stringstream filename;

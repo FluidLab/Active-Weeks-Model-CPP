@@ -441,7 +441,7 @@ int main() {
             }
 
             try {
-                MatrixXd initial_state = generate_initial_state(N, r, epsilon, v, rng);
+                MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
                 
                 //std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
                 std::string dpath="Z:/Jared/Data/weeks_model_desktop/caging time h trajectories, vary epsilon and taup/";
