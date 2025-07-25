@@ -370,7 +370,9 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
     // Initialize active force variables based on model type
     VectorXd current_phi;
-    MatrixXd current_active_forces;
+    MatrixXd stored_forces; // Only used for AOUP to store O-U force evolution
+    std::vector<double> sum_force_magnitudes(N, 0.0); // Vector to track time-averaged active force magnitudes
+    int magnitude_count = 0;
 
     if (model_type == "ABP") {
         // Initialize phi values for ABP
@@ -378,21 +380,36 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         for (int disk_i = 0; disk_i < N; disk_i++) {
             current_phi(disk_i) = 2 * M_PI * rng.uniform();
         }
-        // Initialize with zeros, will be calculated from phi
-        current_active_forces = MatrixXd::Zero(N, 2);
     } else if (model_type == "AOUP") {
-        // Initialize active forces for AOUP
-        // We'll still initialize phi for compatibility, but won't use it
+        // Initialize with zero phi for compatibility (not used for AOUP)
         current_phi = VectorXd::Zero(N);
-        current_active_forces = MatrixXd::Zero(N, 2);
         
-        // Initialize with random values drawn from the steady-state distribution
+        // Initialize stored forces with random values drawn from the steady-state distribution
+        stored_forces = MatrixXd::Zero(N,2);
         for (int disk_i = 0; disk_i < N; disk_i++) {
             double steady_state_std = std::sqrt(D_f / tau_p); // From theory of Ornstein-Uhlenbeck processes
-            current_active_forces(disk_i, 0) = steady_state_std * rng.normal();
-            current_active_forces(disk_i, 1) = steady_state_std * rng.normal();
+            stored_forces(disk_i, 0) = steady_state_std * rng.normal();
+            stored_forces(disk_i, 1) = steady_state_std * rng.normal();
         }
     }
+
+    // Calculate initial active forces and add to magnitude sum
+    MatrixXd active_forces;
+    if (model_type == "ABP") {
+        // For ABP, calculate force from initial phi values
+        active_forces = get_active_force(current_phi, f, N);
+    } else if (model_type == "AOUP") {
+        // For AOUP, use values in initialized stored_forces
+        active_forces = stored_forces;
+    }
+
+    for (int disk_i = 0; disk_i < N; disk_i++) {
+        double fx = active_forces(disk_i, 0);
+        double fy = active_forces(disk_i, 1);
+        double magnitude = std::sqrt(fx*fx + fy*fy);
+        sum_force_magnitudes[disk_i] += magnitude;
+    }
+    magnitude_count++;
 
     // Open output file
     std::ofstream outfile(filename);
@@ -426,7 +443,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     if (model_type == "ABP") {
         initial_phi = current_phi;
     } else if (model_type == "AOUP") {
-        initial_phi = extract_phi_from_forces(current_active_forces);
+        initial_phi = extract_phi_from_forces(active_forces);
     }
 
     h_values.push_back(calculate_h(current_positions));
@@ -439,50 +456,51 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     // Integrate the SDE
     double t = 0;
     for (size_t i=0; i<nsamp; ++i) {
-        // Get the active force on each disk - modify this call
-        MatrixXd active_force;
+        // Use current active forces for this timestep
         if (model_type == "ABP") {
-            active_force = get_active_force(current_phi, f, N);
+            active_forces = get_active_force(current_phi, f, N);
         } else if (model_type == "AOUP") {
-            active_force = current_active_forces; // Use stored force values directly
+            active_forces = stored_forces;
         }
-        
-        // Generate Sk values
-        MatrixXd Sk = Generate_Sk(N, rng, IntegrationType);
-        
-        // Draw noise and update phi/forces depending on model
+
+        // Draw Wiener process increments for position dynamics (same for both models)
         MatrixXd dW(N,2);
         for (int disk_i = 0; disk_i<N; ++disk_i) {
-            if (model_type == "ABP") {
-                // Update phi for ABP
-                double dphi = sqrt(h/tau_p) * rng.normal();
-                current_phi(disk_i) += dphi;
-            } else if (model_type == "AOUP") {
-                // Update active forces for AOUP according to O-U process
-                for (int coord = 0; coord < 2; coord++) {
-                    double drift = -current_active_forces(disk_i, coord) / tau_p * h;
-                    double diffusion = sqrt(2.0 * D_f * h) * rng.normal() / tau_p;
-                    current_active_forces(disk_i, coord) += drift + diffusion;
-                }
-            }
-            
-            // Draw Wiener process increments for position dynamics (same for both models)
             for (int coord=0; coord<2; coord++) {
                 dW(disk_i, coord) = sqrt(h) * rng.normal();
             }
         }
 
+        // Generate Sk values
+        MatrixXd Sk = Generate_Sk(N, rng, IntegrationType);
+
         // Compute Runge-Kutta coefficients
-        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma)+active_force) + 
+        MatrixXd K1 = h*(a(current_positions, epsilon, int_strength, sigma)+active_forces) + 
                       ((dW-Sk*sqrt(h)).array()*b(current_positions, T).array()).matrix();
-        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma)+active_force) + 
+        MatrixXd K2 = h*(a(current_positions+K1, epsilon, int_strength, sigma)+active_forces) + 
                       ((dW+Sk*sqrt(h)).array()*b(current_positions+K1, T).array()).matrix();
 
         // Update positions
         current_positions += (K1+K2)/2;
         t += h;
 
-        // Calculate values and add to current chunk
+        // Update phi/forces for each disk for the NEXT timestep
+        for (int disk_i = 0; disk_i<N; ++disk_i) {
+            if (model_type == "ABP") {
+                // Update phi for ABP
+                double dphi = sqrt(h/tau_p) * rng.normal();
+                current_phi(disk_i) += dphi;
+            } else if (model_type == "AOUP") {
+                // Update stored active forces for AOUP according to O-U process
+                for (int coord = 0; coord < 2; coord++) {
+                    double drift = -stored_forces(disk_i, coord) / tau_p * h;
+                    double diffusion = sqrt(2.0 * D_f * h) * rng.normal() / tau_p;
+                    stored_forces(disk_i, coord) += drift + diffusion;
+                }
+            }
+        }
+
+        // Calculate observables
         double h_value = calculate_h(current_positions);
         double A_value = calculate_A(current_positions);
 
@@ -492,17 +510,26 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
             M_value = calculate_M(current_positions, current_phi);
             P_value = calculate_P(current_phi);
         } else if (model_type == "AOUP") {
-            VectorXd phi_from_forces = extract_phi_from_forces(current_active_forces);
+            VectorXd phi_from_forces = extract_phi_from_forces(active_forces);
             M_value = calculate_M(current_positions, phi_from_forces);
             P_value = calculate_P(phi_from_forces);
         }
 
-        // When storing phi_values for output:
+        // Calculate and accumulate force magnitudes
+        for (int disk_i = 0; disk_i < N; disk_i++) {
+            double fx = active_forces(disk_i, 0);
+            double fy = active_forces(disk_i, 1);
+            double magnitude = std::sqrt(fx*fx + fy*fy);
+            sum_force_magnitudes[disk_i] += magnitude;
+        }
+        magnitude_count++;
+
+        // Prepare phi_values for output
         VectorXd phi_for_output;
         if (model_type == "ABP") {
             phi_for_output = current_phi;
         } else if (model_type == "AOUP") {
-            phi_for_output = extract_phi_from_forces(current_active_forces);
+            phi_for_output = extract_phi_from_forces(active_forces);
         }
 
         h_values.push_back(h_value);
@@ -555,6 +582,15 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         }
         outfile << "\n";
     }
+
+    // Print time-averaged force magnitudes
+    printf("Mean active force magnitudes over simulation (should be the same as provided f value):\n");
+    for (int disk_i = 0; disk_i < N; disk_i++) {
+        double mean_magnitude = sum_force_magnitudes[disk_i] / magnitude_count;
+        printf("  Disk %d: %.6f\n", disk_i, mean_magnitude);
+    }
+    printf("\n");
+
     outfile.close();
 }
 
@@ -574,7 +610,7 @@ int main() {
     //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {1}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
+    const std::vector<double> tau_p_vals = {0.5}; // Different tau_p values to run in parallel, {0.001, 0.0022, 0.0046, 0.01, 0.022, 0.046, 0.1, 0.22, 0.46, 1, 2, 3, 4, 5}
     const int chunk_size = (int)1e7; // Process 10 million steps at a time
 
     bool had_error = false;
