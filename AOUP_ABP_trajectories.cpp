@@ -616,7 +616,7 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
                 
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/AOUP_trajectories_22_07_2025/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/" + model_type + "_trajectories_22_07_2025/";
                 std::stringstream filename;
                 filename << "T=" << T << "_epsilon=" << epsilon << "_f=" << f 
                         << "_taup=" << tau_p << "_model=" << model_type << "_same_stationary_force_norms_trajectories.csv";
