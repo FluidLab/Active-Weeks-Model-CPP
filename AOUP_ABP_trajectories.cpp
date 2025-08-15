@@ -371,6 +371,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     // Initialize active force variables based on model type
     VectorXd current_phi;
     MatrixXd stored_forces; // Only used for AOUP to store O-U force evolution
+    MatrixXd active_forces; // the current matrix of active forces, regardless of the model
     std::vector<double> sum_force_magnitudes(N, 0.0); // Vector to track time-averaged active force magnitudes
     int magnitude_count = 0;
 
@@ -392,24 +393,6 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
             stored_forces(disk_i, 1) = steady_state_std * rng.normal();
         }
     }
-
-    // Calculate initial active forces and add to magnitude sum
-    MatrixXd active_forces;
-    if (model_type == "ABP") {
-        // For ABP, calculate force from initial phi values
-        active_forces = get_active_force(current_phi, f, N);
-    } else if (model_type == "AOUP") {
-        // For AOUP, use values in initialized stored_forces
-        active_forces = stored_forces;
-    }
-
-    for (int disk_i = 0; disk_i < N; disk_i++) {
-        double fx = active_forces(disk_i, 0);
-        double fy = active_forces(disk_i, 1);
-        double magnitude = std::sqrt(fx*fx + fy*fy);
-        sum_force_magnitudes[disk_i] += magnitude;
-    }
-    magnitude_count++;
 
     // Open output file
     std::ofstream outfile(filename);
@@ -458,6 +441,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
     for (size_t i=0; i<nsamp; ++i) {
         // Use current active forces for this timestep
         if (model_type == "ABP") {
+            // For ABP, calculate force from current phi values
             active_forces = get_active_force(current_phi, f, N);
         } else if (model_type == "AOUP") {
             active_forces = stored_forces;
