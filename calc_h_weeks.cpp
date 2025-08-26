@@ -51,8 +51,8 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r + epsilon; // Size of enclosure
+MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
+    double R = N*r_eff + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -67,7 +67,7 @@ MatrixXd generate_initial_state(int N, double r, double epsilon, double v, Threa
             double v_direction = 2 * M_PI *rng.uniform();
             
             // Set disk properties
-            state(i, 0) = r; // radius
+            state(i, 0) = r_eff/std::pow(2, 1.0/6.0); // actual disk radius is WCA effective radius divided by 2^(1/6)
             state(i, 1) = r_pos * cos(theta); // x
             state(i, 2) = r_pos * sin(theta); // y
             state(i, 3) = v * cos(v_direction); // vx
@@ -409,29 +409,29 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 int main() {
     // Simulation parameters
     const int N = 3;
-    const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
-    const double epsilon = 0.062; // uncomment for constant-epsilon sims
-    //const std::vector<double> eps_vals = {1.1,1.6,2.3,3.4,4.8,7,10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10}; // uncomment for different values to run in parallel
+    const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
+    //const double epsilon = 0.062; // uncomment for constant-epsilon sims
+    const std::vector<double> eps_vals = {1.1,1.6,2.3,3.4,4.8,7,10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = (int)2e5; // Change depending on the epsilon value!
-    const int nsamp = (int)2e9;
+    const double Tmax = (int)1e5; // Change depending on the epsilon value!
+    const int nsamp = (int)1e9;
     const double int_strength = 40;
-    const double T = 0.5;
+    const double T = 0.0;
     const double f = 1;
-    //const double tau_p = 5; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    const double tau_p = 5; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.0002,1}; // uncomment for different values to run in parallel
+    //const std::vector<double> tau_p_vals = {0.0002,1}; // uncomment for different values to run in parallel
     const int chunk_size = (int)5e7; // Process 50 million steps at a time
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < tau_p_vals.size(); i++) {
+    for(size_t i = 0; i < eps_vals.size(); i++) {
     //for(size_t i = 0; i < eps_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double tau_p = tau_p_vals[i];
+            double epsilon = eps_vals[i];
             //double epsilon = eps_vals[i];
             
             #pragma omp critical
@@ -441,10 +441,10 @@ int main() {
             }
 
             try {
-                MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
+                MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
                 
                 //std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/caging time h trajectories, vary epsilon and taup/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP REPEAT caging time 26-08-2025/";
                 std::stringstream filename;
                 filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << ".bin";
                 std::string output_file = dpath + filename.str();

@@ -75,8 +75,8 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r + epsilon; // Size of enclosure
+MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
+    double R = N*r_eff + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -91,7 +91,7 @@ MatrixXd generate_initial_state(int N, double r, double epsilon, double v, Threa
             double v_direction = 2 * M_PI *rng.uniform();
             
             // Set disk properties
-            state(i, 0) = r; // radius
+            state(i, 0) = r_eff/std::pow(2, 1.0/6.0); // actual disk radius is WCA effective radius divided by 2^(1/6)
             state(i, 1) = r_pos * cos(theta); // x
             state(i, 2) = r_pos * sin(theta); // y
             state(i, 3) = v * cos(v_direction); // vx
@@ -561,7 +561,7 @@ void solve_RungeKutta_RT_chunks(MatrixXd X, double Tmax, int nsamp, double epsil
 int main() {
     /* Simulation parameters */
     const int N = 3;
-    const double r = 1.0/pow(2, 1.0/6.0); /* this makes the effective radius of the disks 1 */
+    const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     const double epsilon = 1.0;
     const double v = 0.0;
     const double Tmax = (int)1e5;
@@ -597,7 +597,7 @@ int main() {
                 }
                 
                 try {
-                    MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
+                    MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
                    
                     std::string dpath="Z:/Jared/Data/weeks_model_desktop/athermal_run_tumble_trajectories_30_06_2025/";
                     std::stringstream filename;
