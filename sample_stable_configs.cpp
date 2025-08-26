@@ -64,8 +64,8 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r + epsilon; // Size of enclosure
+MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
+    double R = N*r_eff + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -80,7 +80,7 @@ MatrixXd generate_initial_state(int N, double r, double epsilon, double v, Threa
             double v_direction = 2 * M_PI *rng.uniform();
             
             // Set disk properties
-            state(i, 0) = r; // radius
+            state(i, 0) = r_eff/std::pow(2, 1.0/6.0); // actual disk radius is WCA effective radius divided by 2^(1/6)
             state(i, 1) = r_pos * cos(theta); // x
             state(i, 2) = r_pos * sin(theta); // y
             state(i, 3) = v * cos(v_direction); // vx
@@ -343,7 +343,7 @@ Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax
 int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 Outputs: Length nsamp vector of h values for the system
 */ 
-void explore_phi_configurations(double epsilon, double r, double Tmax, double dt, 
+void explore_phi_configurations(double epsilon, int r_eff, double Tmax, double dt, 
     double int_strength, double T, double f,
     const std::string& output_dir, double stabilization_time = 10.0) {
     const int N = 3;
@@ -355,7 +355,7 @@ void explore_phi_configurations(double epsilon, double r, double Tmax, double dt
     ThreadsafeRNG rng;
     
     /* Generate initial state */
-    MatrixXd initial_state = generate_initial_state(N, r, epsilon, 0.0, rng);
+    MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, 0.0, rng);
     
     /* Create phi values (evenly spaced around circle) */
     std::vector<double> phi_values(num_phi_steps);
@@ -575,7 +575,7 @@ void explore_phi_configurations(double epsilon, double r, double Tmax, double dt
 int main() {
     /* Simulation parameters */
     const int N = 3;
-    const double r = 1.0/pow(2, 1.0/6.0); // Makes effective radius of the disks 1
+    const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     const std::vector<double> eps_vals = {0.01, 0.1, 0.6, 1};
     const double Tmax = 100;
     const double dt = 1e-4; // simulation step size
@@ -603,7 +603,7 @@ int main() {
             
             try {
                 /* Explore phi space for this epsilon */
-                explore_phi_configurations(epsilon, r, Tmax, dt, int_strength, T, f, output_dir, stabilization_time);
+                explore_phi_configurations(epsilon, r_eff, Tmax, dt, int_strength, T, f, output_dir, stabilization_time);
                 
                 #pragma omp critical
                 {
