@@ -51,8 +51,8 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-MatrixXd generate_initial_state(int N, double r, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r + epsilon; // Size of enclosure
+MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
+    double R = N*r_eff + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -67,7 +67,7 @@ MatrixXd generate_initial_state(int N, double r, double epsilon, double v, Threa
             double v_direction = 2 * M_PI *rng.uniform();
             
             // Set disk properties
-            state(i, 0) = r; // radius
+            state(i, 0) = r_eff/std::pow(2, 1.0/6.0); // actual disk radius is WCA effective radius divided by 2^(1/6)
             state(i, 1) = r_pos * cos(theta); // x
             state(i, 2) = r_pos * sin(theta); // y
             state(i, 3) = v * cos(v_direction); // vx
@@ -341,7 +341,7 @@ std::vector<std::vector<std::tuple<double, double, double>>> solve_RungeKutta(Ma
 int main() {
     // Simulation parameters
     const int N = 3;
-    const double r = 1.0/pow(2, 1.0/6.0); // this makes the effective radius of the disks 1, since the WCA potential kicks in at a separation of 2^1/6
+    const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     const double epsilon = 0.06;
     const double v = 0.0;
     const double Tmax = 100000;
@@ -365,7 +365,7 @@ int main() {
                           << " starting calculation for f = " << f << std::endl;
             }
 
-            MatrixXd initial_state = generate_initial_state(N, r*std::pow(2, 1.0/6.0), epsilon, v, rng);
+            MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
             std::vector<std::vector<std::tuple<double, double, double>>> brownian = 
                 solve_RungeKutta(initial_state, Tmax, nsamp, epsilon, int_strength, rng, T, f, "I");
 
