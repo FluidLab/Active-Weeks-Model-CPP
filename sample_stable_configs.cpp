@@ -506,11 +506,11 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
                     h_histogram[rounded_h]++;
                     
                     /* Progress update */
-                    completed++;
-                    if (completed % (total_configs / 20) == 0 || completed == total_configs) {
-                        printf("Completed %d/%lld configurations (%.1f%%) - Found %zu stable configs\n", 
-                               completed, total_configs, 100.0 * completed / total_configs, stable_configs.size());
-                    }
+                    // completed++;
+                    // if (completed % (total_configs / 10) == 0 || completed == total_configs) {
+                    //     printf("Completed %d/%lld configurations (%.1f%%) - Found %zu stable configs\n", 
+                    //            completed, total_configs, 100.0 * completed / total_configs, stable_configs.size());
+                    // }
                 }
             }
         }
@@ -590,7 +590,7 @@ int main() {
     /* Simulation parameters */
     const int N = 3; /* Code as currently written WON'T WORK if disk number is not 3, could be easily adapted though */
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    const std::vector<double> eps_vals = {10};
+    const std::vector<double> eps_vals = {0.01, 0.1, 0.25, 0.6, 1, 10};
     const double Tmax = 100;
     const double dt = 1e-4; // simulation step size
     const double int_strength = 40;
@@ -598,7 +598,7 @@ int main() {
     const double f = 1;
     
     /* Phase space exploration parameters */
-    const int num_spatial_configs = 2;  // Number of random spatial arrangements to test
+    const int num_spatial_configs = 100;  // Number of random spatial arrangements to test
     const int num_phi_samples = 1000;     // Number of random phi combinations per spatial config
     
     /* Stability checking parameters */
