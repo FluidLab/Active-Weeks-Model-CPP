@@ -336,253 +336,275 @@ void save_stable_configuration(const StableConfiguration& config, const std::str
 }
 
 /*
-Uses the strong order 0.5 Euler method from SDEs to solve dynamics of the system of equations
-                          dX = a(t,X)dt+b(t,X)dW,
-only saving the h values of the 3-particle system rather than the whole trajectories.
-Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
-int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
-Outputs: Length nsamp vector of h values for the system
+Explores phase space by:
+1. Generating multiple random spatial configurations
+2. For each spatial configuration, testing multiple random phi combinations
+3. Only saving configurations that stabilize
+
+Inputs: N (number of disks), epsilon, r_eff, Tmax, dt, int_strength, T, f, output_dir,
+        num_spatial_configs (number of random spatial arrangements to test),
+        num_phi_samples (number of random phi combinations per spatial config),
+        stabilization_time, stability_window, stability_threshold
+Outputs: Saves stable configurations to files
 */ 
-void explore_phi_configurations(double epsilon, int r_eff, double Tmax, double dt, 
-    double int_strength, double T, double f,
-    const std::string& output_dir, double stabilization_time = 10.0) {
-    const int N = 3;
-    const int num_phi_steps = 60; // Number of different phi values to try per disk
-    const int stability_window = 1000;
-    const double stability_threshold = 0.0005;
-    
-    /* Initialize RNG */
-    ThreadsafeRNG rng;
-    
-    /* Generate initial state */
-    MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, 0.0, rng);
-    
-    /* Create phi values (evenly spaced around circle) */
-    std::vector<double> phi_values(num_phi_steps);
-    for (int i = 0; i < num_phi_steps; i++) {
-        phi_values[i] = 2.0 * M_PI * i / num_phi_steps;
-    }
+void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double dt, double int_strength, double T, 
+    double f, const std::string& output_dir, int num_spatial_configs, int num_phi_samples,
+    double stabilization_time = 10.0, int stability_window = 1000, double stability_threshold = 0.0005) {
     
     /* Storage for h-value histogram */
     std::map<double, int> h_histogram;
     int bin_width_precision = 2; // Round h to this many decimal places for binning
+
+    /* Storage for all stable h values (for analysis) */
+    std::vector<double> all_stable_h_values;
     
     /* Storage for stable configurations */
     std::vector<StableConfiguration> stable_configs;
     
     /* Total number of configurations to test */
-    int total_configs = pow(num_phi_steps, N);
+    long long total_configs = static_cast<long long>(num_spatial_configs) * num_phi_samples;
     int completed = 0;
     
-    printf("Testing %d different phi configurations for epsilon = %.2f\n", 
-           total_configs, epsilon);
+    printf("Testing %d spatial configurations x %d phi samples = %lld total configurations for epsilon = %.2f\n", 
+           num_spatial_configs, num_phi_samples, total_configs, epsilon);
 
     /* Calculate the number of steps to wait before stability checking */
     int stabilization_steps = static_cast<int>(stabilization_time / dt);
     printf("Will begin stability checking after %d timesteps (%.2f time units)\n", 
            stabilization_steps, stabilization_time);
     
-    /* Process each phi configuration */
-    #pragma omp parallel for collapse(3) schedule(dynamic)
-    for (int phi1_idx = 0; phi1_idx < num_phi_steps; phi1_idx++) {
-        for (int phi2_idx = 0; phi2_idx < num_phi_steps; phi2_idx++) {
-            for (int phi3_idx = 0; phi3_idx < num_phi_steps; phi3_idx++) {
-                double phi1 = phi_values[phi1_idx];
-                double phi2 = phi_values[phi2_idx];
-                double phi3 = phi_values[phi3_idx];
+    /* Loop over spatial configurations */
+    for (int spatial_id = 0; spatial_id < num_spatial_configs; spatial_id++) {
+        printf("Starting spatial configuration %d/%d for epsilon=%.2f\n", 
+               spatial_id + 1, num_spatial_configs, epsilon);
+        
+        /* Generate a new random initial spatial configuration */
+        ThreadsafeRNG spatial_rng;
+        spatial_rng.set_seed(spatial_id * 1000000); // Ensure different spatial configs
+        
+        MatrixXd initial_state;
+        try {
+            initial_state = generate_initial_state(N, r_eff, epsilon, 0.0, spatial_rng);
+            //printf("Successfully generated initial state for spatial config %d\n", spatial_id);
+        } catch (const std::exception& e) {
+            printf("ERROR: Failed to generate spatial configuration %d for epsilon=%.2f: %s\n", 
+                   spatial_id, epsilon, e.what());
+            continue; // Skip this spatial configuration and try the next one
+        }
+        
+        //printf("About to start parallel phi sampling for spatial config %d\n", spatial_id);
+        
+        /* Process each phi configuration for this spatial arrangement */
+        #pragma omp parallel for schedule(dynamic)
+        for (int phi_sample_id = 0; phi_sample_id < num_phi_samples; phi_sample_id++) {
+            /* Create a thread-local RNG with deterministic seed based on spatial and phi IDs */
+            ThreadsafeRNG local_rng;
+            local_rng.set_seed(spatial_id * 1000000 + phi_sample_id);
+            
+            /* Generate random phi values for each disk */
+            VectorXd current_phi(N);
+            for (int disk_id = 0; disk_id < N; disk_id++) {
+                current_phi(disk_id) = 2.0 * M_PI * local_rng.uniform();
+            }
+            
+            /* Create a copy of the initial state for this run */
+            MatrixXd X = initial_state;
+            
+            /* Run simulation */
+            MatrixXd current_positions(N, 2);
+            current_positions.col(0) = X.col(1);
+            current_positions.col(1) = X.col(2);
+            
+            const double sigma = 2*X(0,0);
+            const int nsamp = static_cast<int>(Tmax/dt);
+            
+            /* Calculate theoretical h_max */
+            const double h_max_theory = 2 + epsilon + sqrt(3 + 4*epsilon + pow(epsilon,2));
+            const double buffer = 0.07; 
+            const double h_max = h_max_theory * (1 + buffer);
+            const double h_min = 0.0;
+            
+            /* Create vector for stability checking */
+            std::vector<double> recent_h_values;
+            recent_h_values.reserve(stability_window);
+            
+            /* Calculate initial h value */
+            double h_value = calculate_h(current_positions);
+            
+            /* Integrate the SDE */
+            double t = 0; 
+            bool is_stable = false;
+            double t_stabilized = 0;
+            
+            for (size_t i = 0; i < nsamp && !is_stable; ++i) {
+                /* Get the active force on each disk */
+                MatrixXd active_force = get_active_force(current_phi, f, N);
                 
-                /* Create a copy of the initial state for this run */
-                MatrixXd X = initial_state;
+                /* Generate Sk values */
+                MatrixXd Sk = Generate_Sk(N, local_rng, "I");
                 
-                /* Create a thread-local RNG with deterministic seed */
-                ThreadsafeRNG local_rng;
-                local_rng.set_seed(phi1_idx * 10000 + phi2_idx * 100 + phi3_idx);
-                
-                /* Set up the current_phi vector */
-                VectorXd current_phi(N);
-                current_phi << phi1, phi2, phi3;
-                
-                /* Run simulation */
-                MatrixXd current_positions(N, 2);
-                current_positions.col(0) = X.col(1);
-                current_positions.col(1) = X.col(2);
-                
-                const double sigma = 2*X(0,0);
-                const int nsamp = static_cast<int>(Tmax/dt);
-                
-                /* Calculate theoretical h_max */
-                const double h_max_theory = 2 + epsilon + sqrt(3 + 4*epsilon + pow(epsilon,2));
-                const double buffer = 0.07; 
-                const double h_max = h_max_theory * (1 + buffer);
-                const double h_min = 0.0;
-                
-                /* Create vector for stability checking */
-                std::vector<double> recent_h_values;
-                recent_h_values.reserve(stability_window);
-                
-                /* Calculate initial h value */
-                double h_value = calculate_h(current_positions);
-                
-                /* Integrate the SDE */
-                double t = 0; 
-                bool is_stable = false;
-                double t_stabilized = 0;
-                
-                for (size_t i = 0; i < nsamp && !is_stable; ++i) {
-                    /* Get the active force on each disk */
-                    MatrixXd active_force = get_active_force(current_phi, f, N);
-                    
-                    /* Generate Sk values */
-                    MatrixXd Sk = Generate_Sk(N, local_rng, "I");
-                    
-                    /* Draw noise values */
-                    MatrixXd dW(N, 2);
-                    for (int disk_i = 0; disk_i < N; ++disk_i) {
-                        for (int coord = 0; coord < 2; coord++) {
-                            dW(disk_i, coord) = sqrt(dt) * local_rng.normal();
-                        }
-                    }
-                    
-                    /* Compute Runge-Kutta coefficients */
-                    MatrixXd K1 = dt*(a(current_positions, epsilon, int_strength, sigma) + active_force) + 
-                                 ((dW-Sk*sqrt(dt)).array()*b(current_positions, T).array()).matrix();
-                    MatrixXd K2 = dt*(a(current_positions+K1, epsilon, int_strength, sigma) + active_force) + 
-                                 ((dW+Sk*sqrt(dt)).array()*b(current_positions+K1, T).array()).matrix();
-                    
-                    /* Update positions */
-                    current_positions += (K1+K2)/2;
-                    t += dt;
-                    
-                    /* Calculate h and check bounds */
-                    h_value = calculate_h(current_positions);
-                    validate_h_value(h_value, h_min, h_max);
-                    
-                    if (i >= stabilization_steps) {
-                        /* Update recent h values for stability check */
-                        if (recent_h_values.size() >= stability_window) {
-                            recent_h_values.erase(recent_h_values.begin());
-                        }
-                        recent_h_values.push_back(h_value);
-                        
-                        /* Check if h has stabilized */
-                        if (recent_h_values.size() >= stability_window) {
-                            if (is_h_stable(recent_h_values, stability_threshold)) {
-                                is_stable = true;
-                                t_stabilized = t;
-                            }
-                        }
+                /* Draw noise values */
+                MatrixXd dW(N, 2);
+                for (int disk_i = 0; disk_i < N; ++disk_i) {
+                    for (int coord = 0; coord < 2; coord++) {
+                        dW(disk_i, coord) = sqrt(dt) * local_rng.normal();
                     }
                 }
                 
-                /* Save result if stable */
-                if (is_stable) {
-                    StableConfiguration config;
-                    config.epsilon = epsilon;
-                    config.h_value = h_value;
-                    config.positions = current_positions;
-                    config.t_stabilized = t_stabilized;
+                /* Compute Runge-Kutta coefficients */
+                MatrixXd K1 = dt*(a(current_positions, epsilon, int_strength, sigma) + active_force) + 
+                             ((dW-Sk*sqrt(dt)).array()*b(current_positions, T).array()).matrix();
+                MatrixXd K2 = dt*(a(current_positions+K1, epsilon, int_strength, sigma) + active_force) + 
+                             ((dW+Sk*sqrt(dt)).array()*b(current_positions+K1, T).array()).matrix();
+                
+                /* Update positions */
+                current_positions += (K1+K2)/2;
+                t += dt;
+                
+                /* Calculate h and check bounds */
+                h_value = calculate_h(current_positions);
+                validate_h_value(h_value, h_min, h_max);
+                
+                if (i >= stabilization_steps) {
+                    /* Update recent h values for stability check */
+                    if (recent_h_values.size() >= stability_window) {
+                        recent_h_values.erase(recent_h_values.begin());
+                    }
+                    recent_h_values.push_back(h_value);
                     
-                    /* Add the initial phi values */
-                    config.initial_phi_values = {phi1, phi2, phi3};
-                    
-                    #pragma omp critical
-                    {
-                        stable_configs.push_back(config);
-                        
-                        /* Update histogram */
-                        double rounded_h = std::round(std::abs(h_value) * pow(10, bin_width_precision)) / pow(10, bin_width_precision);
-                        h_histogram[rounded_h]++;
-                        
-                        /* Progress update */
-                        completed++;
-                        if (completed % (total_configs / 10) == 0 || completed == total_configs) {
-                            printf("Completed %d/%d configurations (%.1f%%)\n", 
-                                   completed, total_configs, 100.0 * completed / total_configs);
+                    /* Check if h has stabilized */
+                    if (recent_h_values.size() >= stability_window) {
+                        if (is_h_stable(recent_h_values, stability_threshold)) {
+                            is_stable = true;
+                            t_stabilized = t;
                         }
                     }
                 }
             }
+            
+            /* Save result if stable */
+            if (is_stable) {
+                StableConfiguration config;
+                config.epsilon = epsilon;
+                config.h_value = h_value;
+                config.positions = current_positions;
+                config.t_stabilized = t_stabilized;
+                
+                /* Add the initial phi values */
+                config.initial_phi_values.clear();
+                for (int disk_id = 0; disk_id < N; disk_id++) {
+                    config.initial_phi_values.push_back(current_phi(disk_id));
+                }
+                
+                #pragma omp critical
+                {
+                    stable_configs.push_back(config);
+                    all_stable_h_values.push_back(h_value);
+                    
+                    /* Update histogram */
+                    double rounded_h = std::round(std::abs(h_value) * pow(10, bin_width_precision)) / pow(10, bin_width_precision);
+                    h_histogram[rounded_h]++;
+                    
+                    /* Progress update */
+                    completed++;
+                    if (completed % (total_configs / 20) == 0 || completed == total_configs) {
+                        printf("Completed %d/%lld configurations (%.1f%%) - Found %zu stable configs\n", 
+                               completed, total_configs, 100.0 * completed / total_configs, stable_configs.size());
+                    }
+                }
+            }
         }
+        
+        //printf("Completed phi sampling for spatial config %d\n", spatial_id);
     }
 
-    printf("Found %zu stable configurations out of %d tested\n", 
-        stable_configs.size(), total_configs);
+    printf("Found %zu stable configurations out of %lld tested (%.1f%%)\n", 
+        stable_configs.size(), total_configs, 100.0 * stable_configs.size() / total_configs);
  
- /* Save histogram to file */
- std::string hist_file = output_dir + "/h_histogram_epsilon_" + formatted_string(epsilon,2) + ".txt";
- std::ofstream out_hist(hist_file);
- if (out_hist.is_open()) {
-     out_hist << "# h_value count\n";
-     for (const auto& entry : h_histogram) {
-         out_hist << entry.first << " " << entry.second << "\n";
-     }
-     out_hist.close();
-     printf("Histogram saved to %s\n", hist_file.c_str());
- }
+    /* Save all h values to file (not histogram) */
+    std::string h_values_file = output_dir + "/all_h_values_epsilon_" + formatted_string(epsilon,2) + ".txt";
+    std::ofstream out_h(h_values_file);
+    if (out_h.is_open()) {
+        out_h << "# h_value (one per line)\n";
+        out_h << std::setprecision(10);
+        for (double h : all_stable_h_values) {
+            out_h << h << "\n";
+        }
+        out_h.close();
+        printf("All h values saved to %s\n", h_values_file.c_str());
+    }
  
- /* Find the most common h values and save representative configurations */
- const int num_representatives = 5;
- std::vector<std::pair<double, int>> hist_entries(h_histogram.begin(), h_histogram.end());
- std::sort(hist_entries.begin(), hist_entries.end(), 
- [](const std::pair<double, int>& a, const std::pair<double, int>& b) { 
-     return a.second > b.second; 
- });
+    /* Find the most common h values and save representative configurations */
+    const int num_representatives = 5;
+    std::vector<std::pair<double, int>> hist_entries(h_histogram.begin(), h_histogram.end());
+    std::sort(hist_entries.begin(), hist_entries.end(), 
+    [](const std::pair<double, int>& a, const std::pair<double, int>& b) { 
+        return a.second > b.second; 
+    });
  
- for (int i = 0; i < std::min(num_representatives, static_cast<int>(hist_entries.size())); i++) {
-     double target_h = hist_entries[i].first;
+    for (int i = 0; i < std::min(num_representatives, static_cast<int>(hist_entries.size())); i++) {
+        double target_h = hist_entries[i].first;
      
-     /* Find a configuration with this h value */
-     for (const auto& config : stable_configs) {
-         double rounded_h = std::round(std::abs(config.h_value) * pow(10, bin_width_precision)) / pow(10, bin_width_precision);
-         if (std::abs(rounded_h - target_h) < 1e-5) {
-             /* Save this configuration */
-             std::string config_file = output_dir + "/config_h_" + 
+        /* Find a configuration with this h value */
+        for (const auto& config : stable_configs) {
+            double rounded_h = std::round(std::abs(config.h_value) * pow(10, bin_width_precision)) / pow(10, bin_width_precision);
+            if (std::abs(rounded_h - target_h) < 1e-5) {
+                /* Save this configuration */
+                std::string config_file = output_dir + "/config_h_" + 
+                                        formatted_string(target_h,2) + "_epsilon_" + 
+                                        formatted_string(epsilon,2) + ".bin";
+             
+                /* Save the configuration */
+                save_stable_configuration(config, config_file);
+             
+                /* Also save a visual text version */
+                std::string vis_file = output_dir + "/visual_config_h_" + 
                                      formatted_string(target_h,2) + "_epsilon_" + 
-                                     formatted_string(epsilon,2) + ".bin";
+                                     formatted_string(epsilon,2) + ".txt";
              
-             /* Save the configuration */
-             save_stable_configuration(config, config_file);
+                std::ofstream out_vis(vis_file);
+                if (out_vis.is_open()) {
+                    out_vis << "# Epsilon: " << epsilon << "\n";
+                    out_vis << "# h_value: " << config.h_value << "\n";
+                    out_vis << "# Time stabilized: " << config.t_stabilized << "\n";
+                    out_vis << "# Initial phi values: ";
+                    for (double phi : config.initial_phi_values) {
+                        out_vis << phi << " ";
+                    }
+                    out_vis << "\n";
+                    out_vis << "# Disk positions (x, y):\n";
+                    for (int j = 0; j < config.positions.rows(); j++) {
+                        out_vis << config.positions(j, 0) << " " << config.positions(j, 1) << "\n";
+                    }
+                    out_vis.close();
+                }
              
-             /* Also save a visual text version */
-             std::string vis_file = output_dir + "/visual_config_h_" + 
-                                  formatted_string(target_h,2) + "_epsilon_" + 
-                                  formatted_string(epsilon,2) + ".txt";
-             
-             std::ofstream out_vis(vis_file);
-             if (out_vis.is_open()) {
-                 out_vis << "# Epsilon: " << epsilon << "\n";
-                 out_vis << "# h_value: " << config.h_value << "\n";
-                 out_vis << "time stabilized:" << config.t_stabilized << "\n";
-                 out_vis << "# Initial phi values: ";
-                 for (double phi : config.initial_phi_values) {
-                     out_vis << phi << " ";
-                 }
-                 out_vis << "\n";
-                 out_vis << "# Disk positions (x, y):\n";
-                 for (int j = 0; j < config.positions.rows(); j++) {
-                     out_vis << config.positions(j, 0) << " " << config.positions(j, 1) << "\n";
-                 }
-                 out_vis.close();
-             }
-             
-             break;
-         }
-     }
- }
+                break;
+            }
+        }
+    }
 }
 
 /* Main function */
 int main() {
     /* Simulation parameters */
-    const int N = 3;
+    const int N = 3; /* Code as currently written WON'T WORK if disk number is not 3, could be easily adapted though */
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    const std::vector<double> eps_vals = {0.01, 0.1, 0.6, 1};
+    const std::vector<double> eps_vals = {10};
     const double Tmax = 100;
     const double dt = 1e-4; // simulation step size
     const double int_strength = 40;
     const double T = 0.0;
     const double f = 1;
+    
+    /* Phase space exploration parameters */
+    const int num_spatial_configs = 2;  // Number of random spatial arrangements to test
+    const int num_phi_samples = 1000;     // Number of random phi combinations per spatial config
+    
+    /* Stability checking parameters */
     const double stabilization_time = 10.0; // Run for 10 time units before checking stability
+    const int stability_window = 1000;
+    const double stability_threshold = 0.0005;
     
     /* Output directory */
     const std::string output_dir = "stable_configurations";
@@ -602,8 +624,9 @@ int main() {
             }
             
             try {
-                /* Explore phi space for this epsilon */
-                explore_phi_configurations(epsilon, r_eff, Tmax, dt, int_strength, T, f, output_dir, stabilization_time);
+                /* Explore phase space for this epsilon */
+                explore_phase_space(N, epsilon, r_eff, Tmax, dt, int_strength, T, f, output_dir, 
+                    num_spatial_configs, num_phi_samples, stabilization_time, stability_window, stability_threshold);
                 
                 #pragma omp critical
                 {
