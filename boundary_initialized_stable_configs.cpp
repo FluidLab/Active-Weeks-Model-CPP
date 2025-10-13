@@ -544,7 +544,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
         stable_configs.size(), total_configs, 100.0 * stable_configs.size() / total_configs);
  
     /* Save all h values to file (not histogram) */
-    std::string h_values_file = output_dir + "/all_h_values_epsilon_" + formatted_string(epsilon,2) + ".txt";
+    std::string h_values_file = output_dir + "/all_h_values_epsilon_" + formatted_string(epsilon,3) + ".txt";
     std::ofstream out_h(h_values_file);
     if (out_h.is_open()) {
         out_h << "# h_value (one per line)\n";
@@ -574,7 +574,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
                 /* Save this configuration */
                 std::string config_file = output_dir + "/config_h_" + 
                                         formatted_string(target_h,2) + "_epsilon_" + 
-                                        formatted_string(epsilon,2) + ".bin";
+                                        formatted_string(epsilon,3) + ".bin";
              
                 /* Save the configuration */
                 save_stable_configuration(config, config_file);
@@ -582,7 +582,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
                 /* Also save a visual text version */
                 std::string vis_file = output_dir + "/visual_config_h_" + 
                                      formatted_string(target_h,2) + "_epsilon_" + 
-                                     formatted_string(epsilon,2) + ".txt";
+                                     formatted_string(epsilon,3) + ".txt";
              
                 std::ofstream out_vis(vis_file);
                 if (out_vis.is_open()) {
@@ -641,7 +641,7 @@ int main() {
             
             #pragma omp critical
             {
-                printf("Thread %d starting calculation for epsilon = %.2f\n", 
+                printf("Thread %d starting calculation for epsilon = %.3f\n", 
                        omp_get_thread_num(), epsilon);
             }
             
@@ -652,14 +652,14 @@ int main() {
                 
                 #pragma omp critical
                 {
-                    printf("Thread %d finished calculation for epsilon = %.2f\n", 
+                    printf("Thread %d finished calculation for epsilon = %.3f\n", 
                            omp_get_thread_num(), epsilon);
                 }
             }
             catch (const std::exception& e) {
                 #pragma omp critical
                 {
-                    printf("Error in thread %d for epsilon = %.2f: %s\n", 
+                    printf("Error in thread %d for epsilon = %.3f: %s\n", 
                            omp_get_thread_num(), epsilon, e.what());
                     had_error = true;
                 }
