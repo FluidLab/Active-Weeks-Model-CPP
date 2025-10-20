@@ -366,7 +366,7 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Files containing time intervals of h zero-crossings and h histogram data
-void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, int nsamp, double epsilon, 
+void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, double epsilon, 
                            double int_strength, ThreadsafeRNG& rng, const std::string& output_base,
                            double T=0.0, double f=0, double tau_p=1, std::string IntegrationType="I", 
                            std::string model_type="AOUP", double D_f=0.5, double thresh_param=1.0) {    
@@ -685,25 +685,27 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    const double epsilon = 0.01;
+    //const double epsilon = 0.021;
+    const std::vector<double> eps_vals = {1.1,1.6,2.3,3.4,4.8,7,10,14.8}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = (int)2e5;
-    const int nsamp = (int)2e9;
-    const std::vector<double> int_strength_vals = {40, 100, 200, 400};
+    const double Tmax = (int)1e6;
+    const long long nsamp = 10000000000LL; // Using LL suffix for literals
+    const double int_strength = 40;
+    //const std::vector<double> int_strength_vals = {40, 100, 200, 400};
     const double T = 0.0; // thermal (typically 0.5) or athermal 0.0
     const double f = 1;
     const std::string model_type = "ABP"; // "AOUP" or "ABP"
-    const double tau_p = 0.05; // persistence time
+    const double tau_p = 0.005; // persistence time
     const double thresh_param = 1.0; // threshold for cage-breaking detection
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < int_strength_vals.size(); i++) {
+    for(size_t i = 0; i < eps_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double int_strength = int_strength_vals[i];
+            double epsilon = eps_vals[i];
             const double D_f = std::pow(f,2) * 2 * tau_p / M_PI; // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
             
             #pragma omp critical
