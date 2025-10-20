@@ -409,7 +409,7 @@ void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, dou
     VectorXd current_phi;
     MatrixXd stored_forces; // Only used for AOUP to store O-U force evolution
     MatrixXd active_forces; // the current matrix of active forces, regardless of the model
-    std::vector<double> sum_force_magnitudes(N, 0.0); // Vector to track time-averaged active force magnitudes
+    std::vector<double> mean_force_magnitudes(N, 0.0); // Running mean of active force magnitudes over time
     int magnitude_count = 0;
 
     if (model_type == "ABP") {
@@ -576,14 +576,17 @@ void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, dou
         // Store h_value for next iteration's zero-crossing detection
         last_h_value = h_value;
 
-        // Calculate and accumulate force magnitudes
+        // Calculate and update running mean of force magnitudes using Welford's online algorithm
+        magnitude_count++;
         for (int disk_i = 0; disk_i < N; disk_i++) {
             double fx = active_forces(disk_i, 0);
             double fy = active_forces(disk_i, 1);
             double magnitude = std::sqrt(fx*fx + fy*fy);
-            sum_force_magnitudes[disk_i] += magnitude;
+
+            // Incremental mean update: mean_new = mean_old + (current sample-mean_old)/n
+            double delta = magnitude - mean_force_magnitudes[disk_i];
+            mean_force_magnitudes[disk_i] += delta / magnitude_count;
         }
-        magnitude_count++;
 
         // Progress update
         if (i % (nsamp/10) == 0) {
@@ -635,8 +638,7 @@ void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, dou
     // Print time-averaged force magnitudes
     printf("\nMean active force magnitudes over simulation (should match f value):\n");
     for (int disk_i = 0; disk_i < N; disk_i++) {
-        double mean_magnitude = sum_force_magnitudes[disk_i] / magnitude_count;
-        printf("  Disk %d: %.6f\n", disk_i, mean_magnitude);
+        printf("  Disk %d: %.6f\n", disk_i, mean_force_magnitudes[disk_i]);
     }
     printf("\n");
 
