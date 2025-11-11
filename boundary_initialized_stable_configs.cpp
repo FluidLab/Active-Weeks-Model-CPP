@@ -544,7 +544,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
         stable_configs.size(), total_configs, 100.0 * stable_configs.size() / total_configs);
  
     /* Save all h values to file (not histogram) */
-    std::string h_values_file = output_dir + "/all_h_values_epsilon_" + formatted_string(epsilon,3) + ".txt";
+    std::string h_values_file = output_dir + "/strict_stabilization_all_h_values_epsilon_" + formatted_string(epsilon,3) + ".txt";
     std::ofstream out_h(h_values_file);
     if (out_h.is_open()) {
         out_h << "# h_value (one per line)\n";
@@ -572,7 +572,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
             double rounded_h = std::round(std::abs(config.h_value) * pow(10, bin_width_precision)) / pow(10, bin_width_precision);
             if (std::abs(rounded_h - target_h) < 1e-5) {
                 /* Save this configuration */
-                std::string config_file = output_dir + "/config_h_" + 
+                std::string config_file = output_dir + "/strict_stabilization_config_h_" + 
                                         formatted_string(target_h,2) + "_epsilon_" + 
                                         formatted_string(epsilon,3) + ".bin";
              
@@ -580,7 +580,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
                 save_stable_configuration(config, config_file);
              
                 /* Also save a visual text version */
-                std::string vis_file = output_dir + "/visual_config_h_" + 
+                std::string vis_file = output_dir + "/strict_stabilization_visual_config_h_" + 
                                      formatted_string(target_h,2) + "_epsilon_" + 
                                      formatted_string(epsilon,3) + ".txt";
              
@@ -612,8 +612,8 @@ int main() {
     /* Simulation parameters */
     const int N = 3; /* Code as currently written WON'T WORK if disk number is not 3, could be easily adapted though */
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    const std::vector<double> eps_vals = {0.001, 0.005, 5, 10}; // {0.001, 0.005, 0.01, 0.1, 0.25, 0.6, 1, 5, 10}
-    const double Tmax = 100;
+    const std::vector<double> eps_vals = {0.25, 1}; // {0.001, 0.005, 0.01, 0.1, 0.25, 0.6, 1, 5, 10}
+    const double Tmax = 1000; // was 100
     const double dt = 1e-4; // simulation step size
     const double int_strength = 40;
     const double T = 0.0;
@@ -624,9 +624,9 @@ int main() {
     const int num_phi_samples = 1000;     // Number of random phi combinations per spatial config
     
     /* Stability checking parameters */
-    const double stabilization_time = 10.0; // Run for 10 time units before checking stability
-    const int stability_window = 1000;
-    const double stability_threshold = 0.0005;
+    const double stabilization_time = 40.0; // Was 10.0, Run for 40 time units before checking stability
+    const int stability_window = 10000; // was 1000
+    const double stability_threshold = 0.001; // was 0.0005
     
     /* Output directory */
     const std::string output_dir = "stable_configurations/boundary_init";
