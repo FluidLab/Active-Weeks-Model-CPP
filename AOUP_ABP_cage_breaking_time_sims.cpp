@@ -217,6 +217,67 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
     return v1_to_v_hop.norm() * sin_of_angle;
 }
 
+////////////////////// Function to calculate L (distance between two non-tracked disks) at a given time ////////////////////////////////////////////////////
+double calculate_L(const MatrixXd& positions, int hopping_disk_id = 2) {
+    // Get indices of non-hopping disks
+    std::vector<int> non_hop_indices;
+    for (int i = 0; i < positions.rows(); i++) {
+        if (i != hopping_disk_id) {
+            non_hop_indices.push_back(i);
+        }
+    }
+    
+    // Get coordinates
+    double x1 = positions(non_hop_indices[0], 0);
+    double y1 = positions(non_hop_indices[0], 1);
+    double x2 = positions(non_hop_indices[1], 0);
+    double y2 = positions(non_hop_indices[1], 1);
+
+    // Calculate vectors
+    Vector2d v1_to_v2(x2 - x1, y2 - y1);
+    
+    // Calculate h
+    return v1_to_v2.norm();
+}
+
+////////////////////// Function to calculate cage length lc at a given time ////////////////////////////////////////////////////
+double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int hopping_disk_id = 2) {
+    const int N = positions.rows();
+    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (sigma*2^(1/6)/2) is 1
+    VectorXd x = positions.col(0);
+    VectorXd y = positions.col(1);
+    VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
+
+    // Store distances from hopping_disk_id to edges of other disks
+    std::vector<double> edge_distances;
+    
+    // Calculate distance from hopping_disk_id to all other disk edges
+    for (int i = 0; i < N; ++i) {
+        if (i != hopping_disk_id) {
+            // Get center-to-center distance
+            double rij = std::sqrt(std::pow((x(hopping_disk_id)-x(i)),2) + 
+                                 std::pow((y(hopping_disk_id)-y(i)),2));
+            // Subtract effective radius of one disk to get distance to edge of potential
+            double edge_dist = rij - sigma*std::pow(2,1.0/6.0)/2;
+            edge_distances.push_back(edge_dist);
+        }
+    }
+
+    // each disk's nearest distance to the edge of the potential felt by the wall is r_eff+R-r
+    double wall_dist = sigma*std::pow(2,1.0/6.0)/2 + R - r(hopping_disk_id);
+    edge_distances.push_back(wall_dist);
+
+    // Calculate average distance between a particle and the edge of its nearest neighbors (other disks and wall)
+    double rnn = 0;
+    for (const double& dist : edge_distances) {
+        rnn += dist;
+    }
+    rnn /= edge_distances.size();
+    double lc;
+    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is nearest neighbor edge distance minus (effective) radius of particles (equivalently: NN center distance minus effective sigma)
+    return lc;
+}
+
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
@@ -690,8 +751,8 @@ int main() {
     //const double epsilon = 0.021;
     const std::vector<double> eps_vals = {1.1,1.6,2.3,3.4,4.8,7,10,14.8}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = (int)1e6;
-    const long long nsamp = 10000000000LL; // Using LL suffix for literals
+    const double Tmax = (int)3e6;
+    const long long nsamp = 30000000000LL; // Using LL suffix for literals
     const double int_strength = 40;
     //const std::vector<double> int_strength_vals = {40, 100, 200, 400};
     const double T = 0.0; // thermal (typically 0.5) or athermal 0.0
@@ -725,7 +786,7 @@ int main() {
                 
                 std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP particle softness testing 09-10-2025/";
                 std::stringstream output_base;
-                output_base << dpath << "event_driven_epsilon=" << epsilon 
+                output_base << dpath << "longer_event_driven_epsilon=" << epsilon 
                            << "_int_strength=" << int_strength 
                            << "_f=" << f 
                            << "_taup=" << tau_p 
