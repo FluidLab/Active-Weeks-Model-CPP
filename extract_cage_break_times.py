@@ -5,23 +5,24 @@ import os
 import pickle
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import glob
+import threading
 
 #################### Simulation parameters #########################################
 N = 3
 r = 1/(2**(1/6))
-active_f = [1]
+active_f = [3, 5] #[0.5, 1, 2, 3, 5]
 T = 0
-epsilon_values = [0.01,0.014,0.021,0.03,0.043,0.062,0.089,0.13,0.18,0.26,0.38,0.55,0.78,1.1,1.6,2.3,3.4,4.8,7,10,14.8] # evenly log-spaced values between 0.01 and 10
-taup_vals = [0.2, 0.5, 1, 2, 3, 5] # persistence times
-thresh_params = [0.5, 1, 1.25] #[0.25, 0.5, 0.75, 1, 1.25]  # Threshold parameters to test
+epsilon_values = [0.062] # evenly log-spaced values between 0.01 and 10
+taup_vals = [0.01, 0.05, 0.1, 0.2, 0.3, 0.33, 0.4, 0.5, 1, 2, 3, 5] # persistence times
+thresh_params = [1] #[0.5, 1, 1.25]  # Threshold parameters to test
 
 # Processing parameters
 chunk_size = int(1e8)      # Number of elements per chunk for trajectory processing
 overlap_size = int(2e6)    # Overlap between chunks to catch boundary transitions
 
 #################### File paths ####################################################
-data_path = 'Z:/Jared/Data/weeks_model_desktop/ABP caging time h trajectories, vary epsilon and taup'
-output_file = 'chunksize=1e8_Athermal_ABP_cage_break_times_analysis.pkl'  # Output file for the dictionary
+data_path = 'Z:/Jared/Data/weeks_model_desktop/ABP caging time heatmaps for three epsilon values, vary taup and f_16_09_2025'
+output_file = 'EXTENDED_epsilon=0.062_heatmaps_Athermal_ABP_cage_break_times_analysis.pkl'  # Output file for the dictionary
 
 #################### Functions for processing trajectory data ######################
 ## extract active_f from filename
@@ -345,7 +346,7 @@ def find_repeat_file(data_path, eps, active_f, taup):
     f_str = format_filename_parameter(active_f)
     taup_str = format_filename_parameter(taup)
     
-    repeat_pattern = os.path.join(data_path, f'REPEAT_h_trajectories_epsilon={eps_str}_f={f_str}_taup={taup_str}.bin')
+    repeat_pattern = os.path.join(data_path, f'REPEAT_h_trajectories_epsilon={eps_str}_f={f_str}_taup={taup_str}_model=ABP.bin')
     matches = glob.glob(repeat_pattern)
     
     if matches:
@@ -393,7 +394,7 @@ def process_parameters(taup, active_f, eps_values, all_data_current, data_path, 
             eps_str = format_filename_parameter(eps)
             f_str = format_filename_parameter(active_f)
             taup_str = format_filename_parameter(taup)
-            file_h = f'h_trajectories_epsilon={eps_str}_f={f_str}_taup={taup_str}.bin'
+            file_h = f'h_trajectories_epsilon={eps_str}_f={f_str}_taup={taup_str}_model=ABP.bin'
             full_path = os.path.join(data_path, file_h)
             is_repeat = False
         
@@ -505,6 +506,9 @@ def save_dictionary(all_data):
     print(f"Data saved to {output_file}")
 
 ################## Main processing loop ##############################
+# Add a lock for thread-safe saves
+save_lock = threading.Lock()
+
 def main():
     global active_f, taup_vals, epsilon_values, thresh_params
     
@@ -516,73 +520,86 @@ def main():
         all_data['results'] = {}
     
     # Set up multiprocessing
-    max_workers = os.cpu_count() - 1
+    max_workers = min(4, os.cpu_count() - 1)  # Limit workers to reduce overhead
     print(f"Using {max_workers} worker processes")
     
-    # Use only the specified combinations instead of discovering all files
-    parameter_combinations = []
-    for taup in taup_vals:
-        for f in active_f:
-            parameter_combinations.append((taup, f))
-    
-    print(f"Processing {len(parameter_combinations)} specified parameter combinations")
-    
-    # Ensure all existing entries have active_f=1 if not already specified
+    # Migration code...
     migrated_structure = {}
     for taup in all_data['results']:
         if isinstance(all_data['results'][taup], dict) and not any(isinstance(key, tuple) for key in all_data['results']):
-            # This is old structure - migrate to new structure with active_f=1
             if taup not in migrated_structure:
                 migrated_structure[taup] = {}
             migrated_structure[taup][1.0] = all_data['results'][taup]
             print(f"Migrated existing data for taup={taup} to include active_f=1")
         else:
-            # Already in new structure or empty
             migrated_structure[taup] = all_data['results'][taup]
     
     all_data['results'] = migrated_structure
     
-    # Use a context manager to ensure clean shutdown of processes
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # Submit each (taup, active_f) combination to the process pool
-        futures = {}
-        for taup, f in parameter_combinations:
-            # Make sure the nested dictionary structure exists
+    # Track what we need to process
+    parameter_combinations = []
+    for taup in taup_vals:
+        for f in active_f:
+            # Initialize structure
             if taup not in all_data['results']:
                 all_data['results'][taup] = {}
             if f not in all_data['results'][taup]:
                 all_data['results'][taup][f] = {}
             
-            # Create a future for this parameter combination
+            parameter_combinations.append((taup, f))
+    
+    print(f"Processing {len(parameter_combinations)} parameter combinations")
+    
+    # Process with proper error handling and synchronization
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {}
+        for taup, f in parameter_combinations:
+            # Pass a deep copy of current data to avoid reference issues
+            import copy
+            current_data = copy.deepcopy(all_data['results'][taup][f])
+            
             future = executor.submit(
                 process_parameters, 
                 taup, 
                 f,
                 epsilon_values, 
-                all_data['results'][taup][f].copy(), 
+                current_data, 
                 data_path,
                 thresh_params
             )
             futures[future] = (taup, f)
         
+        # Track completed and failed
+        completed = []
+        failed = []
+        
         # Process results as they complete
         for future in as_completed(futures):
-            params = futures[future]
-            taup, active_f = params
+            taup, f = futures[future]
             try:
-                result_key, param_results = future.result()
-                all_data['results'][taup][active_f] = param_results
-                print(f"Completed processing for taup={taup}, active_f={active_f}")
+                result_key, param_results = future.result(timeout=None)
                 
-                # Save intermediate results
-                save_dictionary(all_data)
-                print(f"Saved data after processing taup={taup}, active_f={active_f}")
+                # Thread-safe update and save
+                with save_lock:
+                    all_data['results'][taup][f] = param_results
+                    save_dictionary(all_data)
+                    print(f"✓ Saved data for taup={taup}, f={f}")
+                    completed.append((taup, f))
+                    
             except Exception as e:
-                print(f"Error processing taup={taup}, active_f={active_f}: {e}")
+                print(f"✗ ERROR processing taup={taup}, f={f}: {e}")
+                import traceback
+                traceback.print_exc()
+                failed.append((taup, f))
     
     # Final save
-    save_dictionary(all_data)
-    print("Analysis complete!")
+    with save_lock:
+        save_dictionary(all_data)
+    
+    print(f"\nAnalysis complete!")
+    print(f"Completed: {len(completed)}/{len(parameter_combinations)}")
+    if failed:
+        print(f"Failed combinations: {failed}")
 
 if __name__ == "__main__":
     main()
