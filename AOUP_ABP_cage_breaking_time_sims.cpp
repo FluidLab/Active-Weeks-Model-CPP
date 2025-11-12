@@ -274,7 +274,7 @@ double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int
     }
     rnn /= edge_distances.size();
     double lc;
-    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is nearest neighbor edge distance minus (effective) radius of disks (equivalently: NN center distance minus effective sigma)
+    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is average nearest neighbor edge distance minus (effective) radius of disks (equivalently: NN center distance minus effective sigma)
     return lc;
 }
 
