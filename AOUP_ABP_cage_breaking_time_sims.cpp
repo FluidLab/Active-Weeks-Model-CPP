@@ -267,14 +267,14 @@ double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int
     double wall_dist = sigma*std::pow(2,1.0/6.0)/2 + R - r(hopping_disk_id);
     edge_distances.push_back(wall_dist);
 
-    // Calculate average distance between a particle and the edge of its nearest neighbors (other disks and wall)
+    // Calculate average distance between a disk's center and the edge of its nearest neighbors (other disks and wall)
     double rnn = 0;
     for (const double& dist : edge_distances) {
         rnn += dist;
     }
     rnn /= edge_distances.size();
     double lc;
-    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is nearest neighbor edge distance minus (effective) radius of particles (equivalently: NN center distance minus effective sigma)
+    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is nearest neighbor edge distance minus (effective) radius of disks (equivalently: NN center distance minus effective sigma)
     return lc;
 }
 
