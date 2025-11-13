@@ -243,7 +243,9 @@ double calculate_L(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Function to calculate cage length lc at a given time ////////////////////////////////////////////////////
 double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int hopping_disk_id = 2) {
     const int N = positions.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (sigma*2^(1/6)/2) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N*r_eff)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (sigma*2^(1/6)/2) is 1
+
     VectorXd x = positions.col(0);
     VectorXd y = positions.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -257,24 +259,25 @@ double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int
             // Get center-to-center distance
             double rij = std::sqrt(std::pow((x(hopping_disk_id)-x(i)),2) + 
                                  std::pow((y(hopping_disk_id)-y(i)),2));
-            // Subtract effective radius of one disk to get distance to edge of potential
-            double edge_dist = rij - sigma*std::pow(2,1.0/6.0)/2;
+            // Distance from center of hopping disk to edge of disk i's potential
+            double edge_dist = rij - r_eff;
             edge_distances.push_back(edge_dist);
         }
     }
 
-    // each disk's nearest distance to the edge of the potential felt by the wall is r_eff+R-r
-    double wall_dist = sigma*std::pow(2,1.0/6.0)/2 + R - r(hopping_disk_id);
+    // Distance from hopping disk center to wall edge (where interaction starts)
+    double wall_dist = R - r(hopping_disk_id);
     edge_distances.push_back(wall_dist);
 
-    // Calculate average distance between a disk's center and the edge of its nearest neighbors (other disks and wall)
+    // Calculate average distance from disk center to edges of its neighbors (other disks and wall)
     double rnn = 0;
     for (const double& dist : edge_distances) {
         rnn += dist;
     }
     rnn /= edge_distances.size();
-    double lc;
-    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is average nearest neighbor edge distance minus (effective) radius of disks (equivalently: NN center distance minus effective sigma)
+
+    // Cage length: average center-to-edge distance minus effective radius (this is equivalent to traditional definition: NN center distance minus effective sigma)
+    double lc = rnn - r_eff;
     return lc;
 }
 
