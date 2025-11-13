@@ -4,6 +4,7 @@
 #include <random>
 #include <fstream>
 #include <sstream>
+#include <iomanip>
 #include <vector>
 #include <string>
 #include <Eigen/Dense>
@@ -147,7 +148,9 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Function to calculate cage length lc at a given time ////////////////////////////////////////////////////
 double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int hopping_disk_id = 2) {
     const int N = positions.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (sigma*2^(1/6)/2) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N*r_eff)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (sigma*2^(1/6)/2) is 1
+
     VectorXd x = positions.col(0);
     VectorXd y = positions.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -161,24 +164,25 @@ double calculate_lc(const MatrixXd& positions, double epsilon, double sigma, int
             // Get center-to-center distance
             double rij = std::sqrt(std::pow((x(hopping_disk_id)-x(i)),2) + 
                                  std::pow((y(hopping_disk_id)-y(i)),2));
-            // Subtract effective radius of one disk to get distance to edge of potential
-            double edge_dist = rij - sigma*std::pow(2,1.0/6.0)/2;
+            // Distance from center of hopping disk to edge of disk i's potential
+            double edge_dist = rij - r_eff;
             edge_distances.push_back(edge_dist);
         }
     }
 
-    // each disk's nearest distance to the edge of the potential felt by the wall is r_eff+R-r
-    double wall_dist = sigma*std::pow(2,1.0/6.0)/2 + R - r(hopping_disk_id);
+    // Distance from hopping disk center to wall edge (where interaction starts)
+    double wall_dist = R - r(hopping_disk_id);
     edge_distances.push_back(wall_dist);
 
-    // Calculate average distance between a particle and the edge of its nearest neighbors (other disks and wall)
+    // Calculate average distance from disk center to edges of its neighbors (other disks and wall)
     double rnn = 0;
     for (const double& dist : edge_distances) {
         rnn += dist;
     }
     rnn /= edge_distances.size();
-    double lc;
-    lc = rnn-(sigma*std::pow(2,1.0/6.0)/2); // Cage length lc is nearest neighbor edge distance minus (effective) radius of particles (equivalently: NN center distance minus effective sigma)
+
+    // Cage length: average center-to-edge distance minus effective radius (this is equivalent to traditional definition: NN center distance minus effective sigma)
+    double lc = rnn - r_eff;
     return lc;
 }
 
@@ -331,7 +335,7 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
 // Inputs: Nx5 MatrixXd current_state, integration_type (Ito vs Stratonovich), Tmax, nsamp, epsilon, 
 // int_strength of WCA potential, integration type "S" for Stratonovich and "I" for Ito 
 // Outputs: Length nsamp vector of h values for the system
-void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon, 
+double solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon, 
                            double int_strength, ThreadsafeRNG& rng, const std::string& filename,
                            double T=0.5, double f=0, double tau_p=1, std::string IntegrationType="I", 
                            int chunk_size=1000000) {    
@@ -367,6 +371,15 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 
     // Calculate initial h value and add to chunk
     h_values.push_back(calculate_h(current_positions));
+
+    // Initialize running average for lc using Welford's algorithm
+    double lc_mean = 0.0;
+    size_t lc_count = 0;
+    
+    // Calculate and accumulate initial lc
+    double lc_initial = calculate_lc(current_positions, epsilon, sigma);
+    lc_count++;
+    lc_mean = lc_initial;
 
     // Integrate the SDE
     double t = 0; 
@@ -405,6 +418,12 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         validate_h_value(h_value, h_min, h_max);
         h_values.push_back(h_value);
 
+        // Calculate lc and update running average using Welford's algorithm
+        double lc_current = calculate_lc(current_positions, epsilon, sigma);
+        lc_count++;
+        double delta = lc_current - lc_mean;
+        lc_mean += delta / lc_count;
+
         // If chunk is full, write to file and clear
         if (h_values.size() >= chunk_size) {
             // Create a buffer for the data (reduces number of write operations)
@@ -441,6 +460,25 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
         outfile.write(reinterpret_cast<char*>(&h_float), sizeof(float));
     }
     outfile.close();
+
+    // Write average cage length to CSV file
+    std::string csv_filename = filename.substr(0, filename.find_last_of('.')) + "_lc_avg.csv";
+    std::ofstream csv_file(csv_filename);
+    if (!csv_file.is_open()) {
+        throw std::runtime_error("Could not open CSV file: " + csv_filename);
+    }
+    
+    // Write header
+    csv_file << "epsilon,f,tau_p,T,int_strength,Tmax,nsamp,lc_avg\n";
+    
+    // Write data with full precision
+    csv_file << std::scientific << std::setprecision(16);
+    csv_file << epsilon << "," << f << "," << tau_p << "," << T << "," 
+             << int_strength << "," << Tmax << "," << nsamp << "," << lc_mean << "\n";
+    
+    csv_file.close();
+    
+    return lc_mean;
 }
 
 /////////////////////////////// Main function ///////////////////////////////
@@ -448,28 +486,28 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    //const double epsilon = 0.062; // uncomment for constant-epsilon sims
-    const std::vector<double> eps_vals = {0.13,0.18,0.26,0.38,0.55,0.78}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
+    const double epsilon = 1.1; // uncomment for constant-epsilon sims
+    //const std::vector<double> eps_vals = {0.13,0.18,0.26,0.38,0.55,0.78}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = (int)1e5; // Change depending on the epsilon value!
-    const int nsamp = (int)1e9;
+    const double Tmax = (int)1e4; // Change depending on the epsilon value!
+    const int nsamp = (int)1e8;
     const double int_strength = 40;
     const double T = 0.0;
     const double f = 1;
-    const double tau_p = 3; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    //const double tau_p = 3; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    //const std::vector<double> tau_p_vals = {0.0002,1}; // uncomment for different values to run in parallel
+    const std::vector<double> tau_p_vals = {0.05, 0.1, 0.2, 0.3, 0.33, 0.4}; // uncomment for different values to run in parallel
     const int chunk_size = (int)5e7; // Process 50 million steps at a time
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < eps_vals.size(); i++) {
+    for(size_t i = 0; i < tau_p_vals.size(); i++) {
     //for(size_t i = 0; i < eps_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double epsilon = eps_vals[i];
+            double tau_p = tau_p_vals[i];
             //double epsilon = eps_vals[i];
             
             #pragma omp critical
@@ -482,18 +520,19 @@ int main() {
                 MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
                 
                 //std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP caging time h trajectories, vary epsilon and taup/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP caging time heatmaps for three epsilon values, vary taup and f_16_09_2025/";
                 std::stringstream filename;
-                filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << ".bin";
+                filename << "TEST_h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_model=ABP" << ".bin";
                 std::string output_file = dpath + filename.str();
 
-                solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
+                double lc_avg = solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
                                       rng, output_file, T, f, tau_p, "I", chunk_size);
 
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for epsilon = " << epsilon << ", taup =" << tau_p << std::endl;
+                              << " finished calculation for epsilon = " << epsilon << ", taup =" << tau_p 
+                              << ", <lc> = " << lc_avg << std::endl;
                 }
             }
             catch (const std::exception& e) {
