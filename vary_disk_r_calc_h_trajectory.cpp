@@ -486,7 +486,7 @@ double solve_RungeKutta_chunks(MatrixXd X, double r_geom, double Tmax, int nsamp
 int main() {
     // Simulation parameters
     const int N = 3;
-    const int r_geom = 1;
+    const int r_geom = 1; /* length scale defining the confinement size, R=3*r_geom + epsilon */
     const double r_eff = 0.8; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     const double epsilon = 0.062; // uncomment for constant-epsilon sims
     //const std::vector<double> eps_vals = {0.13,0.18,0.26,0.38,0.55,0.78}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
@@ -521,10 +521,9 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r_geom, r_eff, epsilon, v, rng);
                 
-                //std::string dpath="C:/Users/jpopows/OneDrive - UvA/Desktop/Active Glasses/Weeks Cage Breaking Model/data/caging time h trajectories, vary epsilon and f/";
                 std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP caging time heatmaps for three epsilon values, vary taup and f_16_09_2025/";
                 std::stringstream filename;
-                filename << "r_eff=0.8_same_confine_geom_h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_model=ABP" << ".bin";
+                filename << "r_eff=" << r_eff << "_same_confine_geom_h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_model=ABP" << ".bin";
                 std::string output_file = dpath + filename.str();
 
                 double lc_avg = solve_RungeKutta_chunks(initial_state, r_geom, Tmax, nsamp, epsilon, int_strength, 
