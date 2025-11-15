@@ -487,18 +487,18 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const int r_geom = 1; /* length scale defining the confinement size, R=3*r_geom + epsilon */
-    const double r_eff = 0.8; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    const double epsilon = 0.062; // uncomment for constant-epsilon sims
+    const double r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
+    const double epsilon = 1.1; // uncomment for constant-epsilon sims
     //const std::vector<double> eps_vals = {0.13,0.18,0.26,0.38,0.55,0.78}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
     const double Tmax = (int)1e5; // Change depending on the epsilon value!
     const int nsamp = (int)1e9;
     const double int_strength = 40;
     const double T = 0.0;
-    const double f = 3;
+    const double f = 1;
     //const double tau_p = 3; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
-    const std::vector<double> tau_p_vals = {0.05, 0.1, 0.2, 0.22, 0.25, 0.27, 0.29, 0.3, 0.31, 0.33, 0.4, 0.5, 0.6}; // uncomment for different values to run in parallel
+    const std::vector<double> tau_p_vals = {0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1, 1.2, 2, 3, 5}; // uncomment for different values to run in parallel
     const int chunk_size = (int)5e7; // Process 50 million steps at a time
 
     bool had_error = false;
@@ -515,13 +515,14 @@ int main() {
             #pragma omp critical
             {
                 std::cout << "Thread " << omp_get_thread_num() 
-                          << " starting calculation for epsilon = " << epsilon << ", taup = " << tau_p << std::endl;
+                          << " starting calculation for epsilon = " << epsilon << ", f =" << f 
+                          << ", taup = " << tau_p << std::endl;
             }
 
             try {
                 MatrixXd initial_state = generate_initial_state(N, r_geom, r_eff, epsilon, v, rng);
                 
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP caging time heatmaps for three epsilon values, vary taup and f_16_09_2025/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP cage time optimum sims 15-11-2025/";
                 std::stringstream filename;
                 filename << "r_eff=" << r_eff << "_same_confine_geom_h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_model=ABP" << ".bin";
                 std::string output_file = dpath + filename.str();
@@ -532,7 +533,7 @@ int main() {
                 #pragma omp critical
                 {
                     std::cout << "Thread " << omp_get_thread_num() 
-                              << " finished calculation for epsilon = " << epsilon << ", taup =" << tau_p 
+                              << " finished calculation for epsilon = " << epsilon << ", f =" << f << ", taup =" << tau_p 
                               << ", <lc> = " << lc_avg << std::endl;
                 }
             }
@@ -540,7 +541,8 @@ int main() {
                 #pragma omp critical
                 {
                     std::cerr << "Error in thread " << omp_get_thread_num() 
-                             << " for epsilon = " << epsilon << ", taup =" << tau_p << ": " << e.what() << std::endl;
+                             << " for epsilon = " << epsilon << ", f =" << f << ", taup =" << tau_p
+                              << ": " << e.what() << std::endl;
                     had_error = true;
                 }
             }
