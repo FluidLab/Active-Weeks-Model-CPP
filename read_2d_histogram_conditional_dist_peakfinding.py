@@ -393,15 +393,37 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
             plot_data = np.log10(p_alpha.T + 1e-10)
             cbar_label = r'$\log_{10}(P_\alpha)$'
         
-        im = ax_main.pcolormesh(h_edges, L_edges, plot_data, shading='flat', cmap=flare_cmap)
+        im = ax_main.pcolormesh(h_edges, L_edges, plot_data, shading='flat', cmap='magma_r', rasterized=True)
         cbar = plt.colorbar(im, ax=ax_main, label=cbar_label)
     else:
-        im = ax_main.pcolormesh(h_edges, L_edges, p_alpha.T, shading='flat', cmap=flare_cmap)
+        im = ax_main.pcolormesh(h_edges, L_edges, p_alpha.T, shading='flat', cmap='magma_r', rasterized=True)
         cbar = plt.colorbar(im, ax=ax_main, label=r'$P_\alpha$')
 
-    # Set axis limits to match the data extent
-    ax_main.set_xlim(h_edges[0], h_edges[-1])
-    ax_main.set_ylim(L_edges[0], L_edges[-1])
+    # Set axis limits to match the data extent (where histogram > threshold)
+    threshold = 1e-10
+    # Find non-zero regions
+    nonzero_mask = histogram > threshold
+    if np.any(nonzero_mask):
+        # Find indices where data exists
+        h_indices, L_indices = np.where(nonzero_mask)
+        
+        # Get the corresponding edge values (with small padding)
+        h_min = h_edges[h_indices.min()]
+        h_max = h_edges[h_indices.max() + 1]  # +1 because edges
+        L_min = L_edges[L_indices.min()]
+        L_max = L_edges[L_indices.max() + 1]
+        
+        # Add small padding for visual clarity
+        h_padding = 0.05 * (h_max - h_min)
+        L_padding = 0.05 * (L_max - L_min)
+        
+        ax_main.set_xlim(h_min - h_padding, h_max + h_padding)
+        ax_main.set_ylim(L_min - L_padding, L_max + L_padding)
+    else:
+        # Fallback to theoretical limits for hard disks + slight padding
+        hmax = 2 + epsilon + np.sqrt(3 + 4*epsilon + epsilon**2)
+        ax_main.set_xlim(-hmax - 4e-2, hmax + 4e-2)
+        ax_main.set_ylim(2-4e-2, 2*(3 + epsilon) - 2 + 4e-2)
     
     # Find and plot peaks
     ridge_mask = None
@@ -474,7 +496,7 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
     ax_main.set_xlabel(r'$h$', fontsize=14)
     ax_main.set_ylabel(r'$\mathcal{L}$', fontsize=14)
     #ax_main.set_title(title, fontsize=16)
-    ax_main.grid(True, alpha=0.3)
+    #ax_main.grid(True, alpha=0.3)
     
     # Plot ridge mask if requested
     if ax_ridges is not None and ridge_mask is not None:
