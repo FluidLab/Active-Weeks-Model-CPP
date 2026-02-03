@@ -51,6 +51,7 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
+/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r to avoid overlaps */
 MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
     double R = N*r_eff + epsilon; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
@@ -195,7 +196,8 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N*r_eff)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -208,7 +210,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         distances(i,i) = 0;
 
         // each disk's nearest distance to the extent of the potential felt by the wall is r_eff+R-r
-        wall_dist(i) = sigma * std::pow(2,1.0/6.0) / 2 + R - r(i);
+        wall_dist(i) = r_eff + R - r(i);
     }
 
     // loop over all unique disk pairs
@@ -239,8 +241,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
 
         //now add the force produced by the wall
         if (!((wall_dist(disk_i)/sigma)>std::pow(2,1.0/6.0))) {
-            double wall_xdist = (sigma*std::pow(2,1.0/6.0)/2+R)*x(disk_i)/r(disk_i);
-            double wall_ydist = (sigma*std::pow(2,1.0/6.0)/2+R)*y(disk_i)/r(disk_i);
+            double wall_xdist = (r_eff+R)*x(disk_i)/r(disk_i);
+            double wall_ydist = (r_eff+R)*y(disk_i)/r(disk_i);
             sum_grad_Ux += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
             +(6/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),6))*((wall_xdist-x(disk_i))/wall_dist(disk_i)); // minus sign out front is because my gradient calculates force FROM disk_i TO wall
             sum_grad_Uy += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
