@@ -458,7 +458,7 @@ if __name__ == "__main__":
     L_components = prob_flux_vector_field[:, :, 1].T
     flux_magnitude = np.sqrt(h_components**2 + L_components**2)
 
-    # Set these manually after reading from first run
+    # Setting flux colorbar manually according to values from tau_p=10
     vmin = 1.5e-5
     vmax = 5.55e-4
     levels = [0.0, 3.0000000000000004e-05, 6.000000000000001e-05, 9.000000000000002e-05, 0.00012000000000000002, 0.00015000000000000001, 0.00018000000000000004, 
@@ -469,7 +469,7 @@ if __name__ == "__main__":
                     cmap='coolwarm', alpha=1, vmin=vmin, vmax=vmax)
 
     # im = ax.contourf(H_field.T, L_field.T, flux_magnitude, levels=20,
-    #                  cmap='coolwarm', alpha=1)
+    #                  cmap='coolwarm', alpha=1) # Uncomment if you want code to set its own levels and colorbar limits
 
     from scipy.interpolate import RegularGridInterpolator
     interp = RegularGridInterpolator((hcenters, Lcenters), p_alpha,
