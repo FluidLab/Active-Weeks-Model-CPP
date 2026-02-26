@@ -433,7 +433,8 @@ MatrixXd Generate_Sk(int N, ThreadsafeRNG& rng, std::string IntegrationType = "I
 void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, double epsilon, 
                            double int_strength, ThreadsafeRNG& rng, const std::string& output_base,
                            double T=0.0, double f=0, double tau_p=1, std::string IntegrationType="I", 
-                           std::string model_type="AOUP", double D_f=0.5, double thresh_param=1.0) {    
+                           std::string model_type="AOUP", double D_f=0.5, double thresh_param=1.0,
+                           long long checkpoint_interval=10000000000LL) {    
     const int N = X.rows();
     const double sigma = 2*X(0,0);
     const double h = Tmax/nsamp;
@@ -528,6 +529,46 @@ void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, dou
     }
     
     last_h_value = h_value;
+
+    // --- Checkpoint writer lambda, for periodic saving of data in case of crash ---
+    auto write_checkpoint = [&](size_t step) {
+        // Write intervals
+        std::string intervals_file = output_base + "_intervals.bin";
+        std::ofstream interval_out(intervals_file, std::ios::binary);
+        size_t n_intervals = (crossing_indices.size() > 1) ? crossing_indices.size() - 1 : 0;
+        interval_out.write(reinterpret_cast<const char*>(&n_intervals), sizeof(size_t));
+        for (size_t k = 1; k < crossing_indices.size(); ++k) {
+            size_t interval = crossing_indices[k] - crossing_indices[k-1];
+            interval_out.write(reinterpret_cast<const char*>(&interval), sizeof(size_t));
+        }
+        interval_out.close();
+
+        // Recompute entropic barrier for checkpoint
+        long long n_max_cp = *std::max_element(bin_counts.begin(), bin_counts.end());
+        int max_bin_idx_cp = std::distance(bin_counts.begin(),
+                                std::max_element(bin_counts.begin(), bin_counts.end()));
+        int zero_bin_idx_cp = get_bin_index(0.0);
+        long long n_0_cp = bin_counts[zero_bin_idx_cp];
+        double eb_cp = (n_0_cp > 0) ? -std::log(static_cast<double>(n_0_cp) / n_max_cp) : INFINITY;
+
+        // Write histogram
+        std::string histogram_file = output_base + "_histogram.bin";
+        std::ofstream hist_out(histogram_file, std::ios::binary);
+        hist_out.write(reinterpret_cast<const char*>(&n_bins),   sizeof(int));
+        hist_out.write(reinterpret_cast<const char*>(&h_min),    sizeof(double));
+        hist_out.write(reinterpret_cast<const char*>(&h_max),    sizeof(double));
+        hist_out.write(reinterpret_cast<const char*>(&eb_cp),    sizeof(double));
+        for (int i = 0; i < n_bins; ++i)
+            hist_out.write(reinterpret_cast<const char*>(&bin_counts[i]), sizeof(long long));
+        hist_out.close();
+
+        #pragma omp critical
+        {
+            std::cout << "[Checkpoint at step " << step << "] "
+                      << n_intervals << " intervals, "
+                      << crossing_indices.size() << " crossings written." << std::endl;
+        }
+    };
 
     // Integrate the SDE
     double t = 0;
@@ -640,6 +681,11 @@ void solve_RungeKutta_event_driven(MatrixXd X, double Tmax, long long nsamp, dou
         // Store h_value for next iteration's zero-crossing detection
         last_h_value = h_value;
 
+        // Periodic checkpoint saving of data files
+        if (checkpoint_interval > 0 && (i + 1) % checkpoint_interval == 0) {
+            write_checkpoint(i + 1);
+        }
+
         // Calculate and update running mean of force magnitudes using Welford's online algorithm
         magnitude_count++;
         for (int disk_i = 0; disk_i < N; disk_i++) {
@@ -751,27 +797,38 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    //const double epsilon = 0.021;
-    const std::vector<double> eps_vals = {1.1,1.6,2.3,3.4,4.8,7,10,14.8}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
+    //const double epsilon = 4.8; // {0.062, 0.13, 0.26, 0.55, 1.1, 2.3, 4.8, 10}
+    const std::vector<double> eps_vals = {0.01,0.014,0.021,0.03,0.043,0.062, 0.089}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
     const double Tmax = (int)3e6;
     const long long nsamp = 30000000000LL; // Using LL suffix for literals
+    const long long checkpoint_interval = 10000000000LL;   // checkpoint every 10B steps
     const double int_strength = 40;
-    //const std::vector<double> int_strength_vals = {40, 100, 200, 400};
+    //const std::vector<double> int_strength_vals = {4, 40, 100, 400, 4000};
     const double T = 0.0; // thermal (typically 0.5) or athermal 0.0
     const double f = 1;
     const std::string model_type = "ABP"; // "AOUP" or "ABP"
-    const double tau_p = 0.005; // persistence time
+    //const double tau_p = 0.001; // persistence time
+    const std::vector<double> tau_p_vals = {0.03};
+    //const std::vector<double> tau_p_vals = {0.01/f, 0.05/f, 0.1/f, 0.2/f, 0.4/f, 0.6/f, 0.7/f, 0.8/f, 0.9/f, 1/f, 1.1/f, 1.2/f, 2/f, 3/f, 5/f}; // uncomment for different values to run in parallel
     const double thresh_param = 1.0; // threshold for cage-breaking detection
+
+    // Build combined (tau_p, epsilon) parameter list
+    struct SimParams { double tau_p; double epsilon; };
+    std::vector<SimParams> param_list;
+    for (double tau_p : tau_p_vals)
+        for (double epsilon : eps_vals)
+            param_list.push_back({tau_p, epsilon});
 
     bool had_error = false;
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < eps_vals.size(); i++) {
+    for (size_t i = 0; i < param_list.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double epsilon = eps_vals[i];
+            double tau_p   = param_list[i].tau_p;
+            double epsilon = param_list[i].epsilon;
             const double D_f = std::pow(f,2) * 2 * tau_p / M_PI; // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
             
             #pragma omp critical
@@ -787,9 +844,9 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
                 
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP particle softness testing 09-10-2025/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/Athermal ABP near equilibrium tight confine cage times 18-02-2026/";
                 std::stringstream output_base;
-                output_base << dpath << "longer_event_driven_epsilon=" << epsilon 
+                output_base << dpath << "epsilon=" << epsilon 
                            << "_int_strength=" << int_strength 
                            << "_f=" << f 
                            << "_taup=" << tau_p 
@@ -798,7 +855,7 @@ int main() {
 
                 solve_RungeKutta_event_driven(initial_state, Tmax, nsamp, epsilon, int_strength, 
                                              rng, output_base.str(), T, f, tau_p, "I",
-                                             model_type, D_f, thresh_param);
+                                             model_type, D_f, thresh_param, checkpoint_interval);
 
                 #pragma omp critical
                 {
