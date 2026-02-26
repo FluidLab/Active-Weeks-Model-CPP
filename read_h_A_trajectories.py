@@ -446,6 +446,13 @@ if __name__ == "__main__":
 
     plot_bootstrap_distribution(circ_samples, circ_mean, circ_std,
                                 tau_p, epsilon, bin_num, save=True)
+    
+    # ===== BASIN ANALYSIS =====
+    print("Finding peaks...")
+    peaks = find_peaks(p_alpha, hcenters, Lcenters, threshold=0.1)
+    print(f"Found {len(peaks)} peaks:")
+    for i, (h_p, L_p, val, _, _) in enumerate(peaks):
+        print(f"  Peak {i}: h={h_p:.3f}, L={L_p:.3f}, p={val:.4f}")
 
     # -------------------------------------------------------------------------
     # Flux magnitude + streamlines visualisation
@@ -496,6 +503,12 @@ if __name__ == "__main__":
     ax.streamplot(H_stream, L_stream, h_masked, L_masked,
                   color='white', linewidth=1.2, density=1.2,
                   arrowsize=1.2, arrowstyle='->')
+    
+    # Mark probability density peaks with open circles
+    for i, (h_p, L_p, _, _, _) in enumerate(peaks):
+        ax.plot(h_p, L_p, 'o', markersize=20,
+                markerfacecolor='none', markeredgewidth=2,
+                markeredgecolor='black')
 
     rect_h = [h_start_actual, h_start_actual, h_end_actual, h_end_actual, h_start_actual]
     rect_L = [L_start_actual, L_end_actual, L_end_actual, L_start_actual, L_start_actual]
