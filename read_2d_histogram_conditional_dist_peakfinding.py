@@ -60,25 +60,27 @@ def read_2d_histogram(filename):
 
 def find_peaks_via_conditionals(p_alpha, h_centers, L_centers, 
                                 threshold=0.1, conditional_prominence=0.01,
-                                local_neighborhood_size=3, min_distance=None):
+                                min_distance=None):
     """
     Find peaks using a two-stage approach:
-    1. Find peaks in each conditional distribution P(h|L) for all L values
-    2. Keep only those peaks that are also local maxima in the 2D distribution
-    
-    This approach is more robust for ridge-like structures that vary smoothly with L.
-    
+    1. Find peaks with relative prominence in each conditional distribution P(h|L)
+    2. Retain only those candidates above a global probability threshold
+
+    This approach is robust for ridge-like structures that vary smoothly with L,
+    since the prominence threshold adapts to the local scale of each slice.
+
     Args:
         p_alpha: 2D probability distribution (n_bins_h x n_bins_L)
         h_centers: 1D array of h bin centers
         L_centers: 1D array of L bin centers
-        threshold: Minimum relative height (relative to global max)
-        conditional_prominence: Prominence for peak detection in P(h|L) (relative to max of that slice)
-        local_neighborhood_size: Size of neighborhood for 2D local maximum check
-        min_distance: Minimum distance between peaks in conditional dist (in bins)
-        
+        threshold: Minimum relative height for a peak (relative to global max)
+        conditional_prominence: Prominence threshold for peak detection in P(h|L),
+                                relative to the maximum of that slice
+        min_distance: Minimum distance between peaks in a conditional slice (in bins)
+
     Returns:
-        peaks: List of tuples: (h_peak, L_peak, value, h_idx, L_idx)
+        peaks: List of tuples (h_peak, L_peak, value, h_idx, L_idx),
+               sorted by probability value descending
     """
     from scipy.signal import find_peaks as find_peaks_1d
     from scipy.ndimage import maximum_filter
@@ -109,35 +111,20 @@ def find_peaks_via_conditionals(p_alpha, h_centers, L_centers,
             distance=min_distance
         )
         
-        # Store candidate peaks
         for h_idx in peak_indices:
             prob_val = p_alpha[h_idx, L_idx]
-            # Only keep if above global threshold
-            if prob_val >= threshold * global_max:
-                h_val = h_centers[h_idx]
-                L_val = L_centers[L_idx]
-                candidate_peaks.append((h_val, L_val, prob_val, h_idx, L_idx))
-    
+            candidate_peaks.append((h_centers[h_idx], L_centers[L_idx], prob_val, h_idx, L_idx))
+
     print(f"  Found {len(candidate_peaks)} candidate peaks from conditional distributions")
     
-    # Stage 2: Filter to keep only local maxima in 2D
-    print(f"Stage 2: Filtering for 2D local maxima")
-    
-    # Create 2D local maximum mask
-    local_max = maximum_filter(p_alpha, size=local_neighborhood_size) == p_alpha
-    
-    # Filter candidates
-    peaks = []
-    for h_val, L_val, prob_val, h_idx, L_idx in candidate_peaks:
-        # Check if this is a local maximum in 2D
-        if local_max[h_idx, L_idx]:
-            peaks.append((h_val, L_val, prob_val, h_idx, L_idx))
-    
-    print(f"  Kept {len(peaks)} peaks that are also 2D local maxima")
-    
-    # Sort by probability value (highest first)
+    # Stage 2: Retain only peaks above the global probability threshold
+    print("Stage 2: Applying global threshold filter")
+    peaks = [(h, L, v, hi, Li) for h, L, v, hi, Li in candidate_peaks
+             if v >= threshold * global_max]
+
+    print(f"  Kept {len(peaks)} peaks above threshold = {threshold} * global_max")
+
     peaks.sort(key=lambda x: x[2], reverse=True)
-    
     return peaks
 
 def find_peaks_2d_old(p_alpha, h_centers, L_centers, 
@@ -336,8 +323,8 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
                       peak_prominence=0.02, show_ridges=False,
                       smoothing_sigma=1.5, hessian_sigma=2.0,
                       use_log_space=True, peak_method='conditional',
-                      conditional_prominence=0.01, local_neighborhood_size=3,
-                      peak_distance_plot_thresh=0.05, plot_entropy=True):
+                      conditional_prominence=0.01, peak_distance_plot_thresh=0.05,
+                      plot_entropy=True):
     """
     Plot the 2D histogram with proper axes, using ridge-based peak detection.
     
@@ -360,7 +347,6 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
         use_log_space: If True, detect ridges in log-probability space
         peak_method: Method for peak detection ('conditional', 'ridge', 'simple')
         conditional_prominence: Prominence for conditional P(h|L) peak detection
-        local_neighborhood_size: Neighborhood size for 2D local maximum check
         plot_entropy: If True, plot -log10(rho); if False, plot log10(P_alpha)
     """
     # Use pcolormesh for proper bin edge handling
@@ -371,6 +357,39 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
     p_alpha = histogram / histogram.sum()
     normalized_hist = histogram / np.max(histogram)
 
+    # # After normalizing, filter low-count bins
+    # min_counts = 0 #10  # arbitrary threshold
+    # filtered_hist = np.where(histogram >= min_counts, histogram, 0)
+    # p_alpha = filtered_hist / filtered_hist.sum()
+    # normalized_hist = filtered_hist / np.max(filtered_hist)
+
+    # Find bins with very small counts near L=2
+    L_threshold = 2  # Look at bins near L=2
+    low_L_mask = (L_centers < L_threshold)
+
+    # Get the histogram values for these low-L bins
+    low_L_hist = histogram[:, low_L_mask]
+
+    # Find non-zero entries
+    nonzero_h_idx, nonzero_L_idx = np.where(low_L_hist > 0)
+
+    if len(nonzero_h_idx) > 0:
+        print("\n=== Diagnostic: Bins below L=2.1 ===")
+        print(f"Found {len(nonzero_h_idx)} non-zero bins below L={L_threshold}")
+        
+        # Convert back to full indices
+        full_L_idx = np.where(low_L_mask)[0][nonzero_L_idx]
+        
+        for i in range(len(nonzero_h_idx)):
+            h_idx = nonzero_h_idx[i]
+            L_idx = full_L_idx[i]
+            count = histogram[h_idx, L_idx]
+            h_val = h_centers[h_idx]
+            L_val = L_centers[L_idx]
+            
+            print(f"  Bin: h={h_val:.4f}, L={L_val:.4f}, count={count:.2e}, "
+                f"-log10(norm)={-np.log10(count/histogram.max()):.2f}")
+
     # Determine layout based on whether we're showing ridges
     if find_peaks_flag and peak_method == 'ridge' and show_ridges:
         fig, axes = plt.subplots(1, 2, figsize=(12, 10))
@@ -380,14 +399,11 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
         fig, ax_main = plt.subplots(figsize=(12, 10))
         ax_ridges = None
     
-    # Get seaborn flare colormap
-    flare_cmap = sns.color_palette("flare", as_cmap=True)
-    
     # Plot main histogram
     if log_scale:
         # Choose what to plot based on plot_entropy flag
         if plot_entropy:
-            plot_data = -np.log10(normalized_hist.T + 1e-10)
+            plot_data = -np.log10(normalized_hist.T) # add small offset if you want a black background
             cbar_label = r'$-S(h, \mathcal{L})$'
         else:
             plot_data = np.log10(p_alpha.T + 1e-10)
@@ -433,8 +449,7 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
             # New conditional-based method
             peaks = find_peaks_via_conditionals(p_alpha, h_centers, L_centers,
                                                threshold=peak_threshold,
-                                               conditional_prominence=conditional_prominence,
-                                               local_neighborhood_size=local_neighborhood_size)
+                                               conditional_prominence=conditional_prominence)
         elif peak_method == 'ridge':
             # Ridge-based method
             peaks, ridge_mask = find_peaks_2d(p_alpha, h_centers, L_centers, 
@@ -493,9 +508,9 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
         #                 bbox=dict(boxstyle='round', facecolor='white', 
         #                         edgecolor=basin['color'], alpha=0.8))
     
-    ax_main.set_xlabel(r'$h$', fontsize=14)
-    ax_main.set_ylabel(r'$\mathcal{L}$', fontsize=14)
-    #ax_main.set_title(title, fontsize=16)
+    ax_main.set_xlabel(r'$h$')
+    ax_main.set_ylabel(r'$\mathcal{L}$')
+    #ax_main.set_title(title)
     #ax_main.grid(True, alpha=0.3)
     
     # Plot ridge mask if requested
@@ -512,9 +527,9 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
         for i, (h_p, L_p, val, _, _) in enumerate(peaks):
             ax_ridges.plot(h_p, L_p, 'r*', markersize=20, markeredgewidth=3)
             
-        ax_ridges.set_xlabel(r'$h$', fontsize=14)
-        ax_ridges.set_ylabel(r'$L$', fontsize=14)
-        ax_ridges.set_title('Detected Ridges (red) and Peaks', fontsize=16)
+        ax_ridges.set_xlabel(r'$h$')
+        ax_ridges.set_ylabel(r'$\mathcal{L}$')
+        ax_ridges.set_title('Detected Ridges (red) and Peaks')
         ax_ridges.grid(True, alpha=0.3)
     
     if save_path:
@@ -767,10 +782,10 @@ def analyze_histogram(histogram, h_edges, L_edges, metadata):
 if __name__ == "__main__":
     epsilon = 0.25
     f=1
-    tau_p = 0.005 # [0.005, 0.890899, 10]
+    tau_p = 10 # [0.001, 0.005, 0.5, 0.890899, 1, 10]
     peak_distance_plot_thresh = 0.05 # The distance applied in the C++ simulations to define the nodes of the network
     # Data filename
-    filename = f"Z:/Jared/Data/weeks_model_desktop/ABP_multidimensional_histograms_07_11_2025/nbins=200_T=0_epsilon={epsilon}_f={f}_taup={tau_p}_model=ABP_2D_histogram.bin"
+    filename = f"Z:/Jared/Data/weeks_model_desktop/ABP_multidimensional_histograms_07_11_2025/10_billion_timesteps_nbins=200_T=0_epsilon={epsilon}_f={f}_taup={tau_p}_model=ABP_2D_histogram.bin"
     
     # Check if file exists
     if not Path(filename).exists():
@@ -788,12 +803,11 @@ if __name__ == "__main__":
         fig, ax, peaks = plot_2d_histogram(histogram, h_edges, L_edges, 
                          title='2D Histogram with Conditional Peak Detection: (h, L)',
                          log_scale=True,
-                         save_path=f'epsilon={epsilon}_taup={tau_p}_2D_histogram_hL_conditional.svg',
+                         save_path=f'10_billion_timesteps_epsilon={epsilon}_taup={tau_p}_2D_histogram_hL_conditional.svg',
                          find_peaks_flag=True,
                          peak_threshold=0.08,           # Global threshold (relative to global max value in a bin)
                          peak_method='conditional',     # Use conditional distribution method
                          conditional_prominence=0.01,   # Prominence within each P(h|L) slice
-                         local_neighborhood_size=3,
                          peak_distance_plot_thresh=peak_distance_plot_thresh, # 2D neighborhood for local max check
                          plot_entropy=True)     # True means plot -log(n(h,L)/n_max(h,L)). False= plot the log of the probability distribution, np.log10(p(h,L))
         
@@ -812,19 +826,18 @@ if __name__ == "__main__":
         #                  peak_prominence=0.02,
         #                  show_ridges=True)
         
-        # Optional: Compare with old method
+        # # Optional: Compare with old method
         # print("\n=== Old 2D Peak Detection (for comparison) ===")
         # plot_2d_histogram(histogram, h_edges, L_edges, 
         #                  title='2D Histogram with Old Method: (h, L)',
         #                  log_scale=True,
         #                  find_peaks_flag=True,
         #                  peak_threshold=0.1,
-        #                  circle_threshold=0.1,
-        #                  use_ridge_detection=False)
+        #                  circle_threshold=0.1)
         
         # Plot marginal distributions
         plot_marginal_distributions(histogram, h_edges, L_edges,
-                                   save_path=f'epsilon={epsilon}_taup={tau_p}_marginal_distributions_hL.png')
+                                   save_path=None) # save_path=f'epsilon={epsilon}_taup={tau_p}_marginal_distributions_hL.png'
         
         # Plot conditional distribution of h given L=conditional_L_value
         conditional_L_value = 2.0 # 4+2*epsilon #2.0
