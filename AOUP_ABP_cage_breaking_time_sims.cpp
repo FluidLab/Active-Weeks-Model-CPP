@@ -808,16 +808,16 @@ int main() {
     const int N = 3;
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     //const double epsilon = 4.8; // {0.062, 0.13, 0.26, 0.55, 1.1, 2.3, 4.8, 10}
-    const std::vector<double> eps_vals = {0.26}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
+    const std::vector<double> eps_vals = {0.13, 0.26, 0.55, 1.1, 1.6, 2.3, 4.8, 10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = (int)1e5;
-    const long long nsamp = 1000000000LL; // Using LL suffix for literals
-    const long long checkpoint_interval = 10000000000LL;   // checkpoint every 10B steps
-    const double int_strength = 40;
+    const double Tmax = (int)4e4;
+    const long long nsamp = 10000000000LL; // Using LL suffix for literals
+    const long long checkpoint_interval = 2000000000LL;   // checkpoint every 2B steps
+    const double int_strength = 1000;
     //const std::vector<double> int_strength_vals = {4, 40, 100, 400, 4000};
     const double T = 0.0; // thermal (typically 0.5) or athermal 0.0
     const double f = 1;
-    const std::string model_type = "AOUP"; // "AOUP" or "ABP"
+    const std::string model_type = "ABP"; // "AOUP" or "ABP"
     //const double tau_p = 0.001; // persistence time
     //const std::vector<double> tau_p_vals = {0.03};
     const std::vector<double> tau_p_vals = {0.01/f, 0.05/f, 0.1/f, 0.2/f, 0.4/f, 0.6/f, 0.8/f, 1/f, 1.2/f, 1.4/f, 1.6/f, 1.8/f, 2/f, 2.5/f, 3/f, 5/f, 10/f}; // uncomment for different values to run in parallel
@@ -854,9 +854,9 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
                 
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/AOUP cage time optimum sims 26-02-2026/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP cage time optimum sims 15-11-2025/";
                 std::stringstream output_base;
-                output_base << dpath << "epsilon=" << epsilon 
+                output_base << dpath << "hardness_testing_epsilon=" << epsilon 
                            << "_int_strength=" << int_strength 
                            << "_f=" << f 
                            << "_taup=" << tau_p 
