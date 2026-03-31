@@ -401,7 +401,7 @@ MatrixXd a(MatrixXd X, double epsilon, double int_strength, double sigma) {
 // Stochastic part b(t,X)
 MatrixXd b(MatrixXd X, double T) {
     const int N = X.rows();
-    return MatrixXd::Constant(N, 2, sqrt(2*T)); // for Brownian motion with D/(k_BT)=1 and defining k_BT = T, b=sqrt(2T)
+    return MatrixXd::Constant(N, 2, sqrt(2*T)); // for Brownian motion with D/(k_BT)=1 and defining k_BT = T, b=sqrt(2T) (note we set drag coefficient=1)
 }
 
 // Code to determine Sk in Runge-Kutta method definition (+-1 with prob 1/2 for Ito SDE, 0 with probability 1 for Stratonovich SDE)
@@ -807,28 +807,31 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    //const double epsilon = 4.8; // {0.062, 0.13, 0.26, 0.55, 1.1, 2.3, 4.8, 10}
-    const std::vector<double> eps_vals = {0.13, 0.26, 0.55, 1.1, 1.6, 2.3, 4.8, 10}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
+    const double epsilon = 0.062; // {0.062, 0.13, 0.26, 0.55, 1.1, 2.3, 4.8, 10}
+    //const std::vector<double> eps_vals = {0.021}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
-    const double Tmax = (int)4e4;
-    const long long nsamp = 10000000000LL; // Using LL suffix for literals
-    const long long checkpoint_interval = 2000000000LL;   // checkpoint every 2B steps
+    const double Tmax = (int)2e4;
+    const long long nsamp = 5000000000LL; // Using LL suffix for literals
+    const long long checkpoint_interval = 1000000000LL;   // checkpoint every 1B steps
     const double int_strength = 1000;
     //const std::vector<double> int_strength_vals = {4, 40, 100, 400, 4000};
     const double T = 0.0; // thermal (typically 0.5) or athermal 0.0
-    const double f = 1;
+    //const double f = 1; // 0.5, 1, 2, 5
+    const std::vector<double> f_vals = {0.5, 2, 5};
     const std::string model_type = "ABP"; // "AOUP" or "ABP"
     //const double tau_p = 0.001; // persistence time
     //const std::vector<double> tau_p_vals = {0.03};
-    const std::vector<double> tau_p_vals = {0.01/f, 0.05/f, 0.1/f, 0.2/f, 0.4/f, 0.6/f, 0.8/f, 1/f, 1.2/f, 1.4/f, 1.6/f, 1.8/f, 2/f, 2.5/f, 3/f, 5/f, 10/f}; // uncomment for different values to run in parallel
+    //const std::vector<double> tau_p_vals = {0.01/f, 0.05/f, 0.1/f, 0.2/f, 0.4/f, 0.6/f, 0.8/f, 1/f, 1.2/f, 1.4/f, 1.6/f, 1.8/f, 2/f, 2.5/f, 3/f, 5/f, 10/f}; // {0.01/f, 0.05/f, 0.1/f, 0.2/f, 0.4/f, 0.6/f, 0.8/f, 1/f, 1.2/f, 1.4/f, 1.6/f, 1.8/f, 2/f, 2.5/f, 3/f, 5/f, 10/f}; uncomment for different values to run in parallel
+    const std::vector<double> lp_vals = {0.01, 0.05, 0.1, 0.2, 0.4, 0.6, 0.8, 1.0, 
+                                      1.2, 1.4, 1.6, 1.8, 2.0, 2.5, 3.0, 5.0, 10.0}; // specify the lp=f*tau_p values to simulate over
     const double thresh_param = 1.0; // threshold for cage-breaking detection
 
-    // Build combined (tau_p, epsilon) parameter list
-    struct SimParams { double tau_p; double epsilon; };
+    // Build combined (tau_p, f) parameter list
+    struct SimParams { double tau_p; double f; };
     std::vector<SimParams> param_list;
-    for (double tau_p : tau_p_vals)
-        for (double epsilon : eps_vals)
-            param_list.push_back({tau_p, epsilon});
+    for (double f_val : f_vals)
+        for (double lp : lp_vals)
+            param_list.push_back({lp / f_val, f_val});
 
     bool had_error = false;
 
@@ -838,7 +841,7 @@ int main() {
         if (!had_error) {
             ThreadsafeRNG rng;
             double tau_p   = param_list[i].tau_p;
-            double epsilon = param_list[i].epsilon;
+            double f = param_list[i].f;
             const double D_f = std::pow(f,2) * 2 * tau_p / M_PI; // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
             
             #pragma omp critical
