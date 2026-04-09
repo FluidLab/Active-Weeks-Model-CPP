@@ -6,6 +6,7 @@ The metadata CSV contains simulation parameters.
 """
 
 from probability_flux_functions import *
+import cmocean
 import numpy as np
 import pandas as pd
 from matplotlib import rc
@@ -343,7 +344,7 @@ if __name__ == "__main__":
     epsilon = 0.25
     T = 0                    # athermal simulations
     f = 1
-    tau_p = 10            # persistence time [0.005, 0.890899, 10]
+    tau_p = 0.005            # persistence time [0.005, 0.890899, 10]
     R = N + epsilon          # enclosure radius R = N + epsilon
     Tmax = int(1e5)
     nsamp = int(1e9)
@@ -445,7 +446,7 @@ if __name__ == "__main__":
     print("="*60)
 
     plot_bootstrap_distribution(circ_samples, circ_mean, circ_std,
-                                tau_p, epsilon, bin_num, save=True)
+                                tau_p, epsilon, bin_num, save=False)
     
     # ===== BASIN ANALYSIS =====
     print("Finding peaks...")
@@ -473,10 +474,10 @@ if __name__ == "__main__":
               0.00039000000000000005, 0.00042000000000000007, 0.00045000000000000004, 0.00048000000000000007, 0.00051, 0.0005400000000000001, 0.0005700000000000001]
 
     im = ax.contourf(H_field.T, L_field.T, flux_magnitude, levels=levels,
-                    cmap='coolwarm', alpha=1, vmin=vmin, vmax=vmax)
+                    cmap='Blues_r', alpha=1, vmin=vmin, vmax=vmax)
 
     # im = ax.contourf(H_field.T, L_field.T, flux_magnitude, levels=20,
-    #                  cmap='coolwarm', alpha=1) # Uncomment if you want code to set its own levels and colorbar limits
+    #                  cmap='Blues_r', alpha=1) # Uncomment if you want code to set its own levels and colorbar limits
 
     from scipy.interpolate import RegularGridInterpolator
     interp = RegularGridInterpolator((hcenters, Lcenters), p_alpha,
@@ -513,14 +514,21 @@ if __name__ == "__main__":
     rect_h = [h_start_actual, h_start_actual, h_end_actual, h_end_actual, h_start_actual]
     rect_L = [L_start_actual, L_end_actual, L_end_actual, L_start_actual, L_start_actual]
     ax.plot(rect_h, rect_L, 'k-', linewidth=3, label='Integration contour')
-    ax.plot(rect_h[0], rect_L[0], 'go', markersize=12, label='Start/End')
+    # ax.plot(rect_h[0], rect_L[0], 'go', markersize=12, label='Start/End')
 
-    arrow_props = dict(arrowstyle='->', lw=2, color='green')
+    # Plot arrows showing integration direction for the contour
+    arrow_props = dict(arrowstyle='->', lw=2, color='black')
     ax.annotate('', xy=(h_start_actual, (L_start_actual + L_end_actual)/2 + 0.1),
                 xytext=(h_start_actual, (L_start_actual + L_end_actual)/2 - 0.1),
                 arrowprops=arrow_props)
     ax.annotate('', xy=((h_start_actual + h_end_actual)/2 + 0.1, L_end_actual),
                 xytext=((h_start_actual + h_end_actual)/2 - 0.1, L_end_actual),
+                arrowprops=arrow_props)
+    ax.annotate('', xy=(h_end_actual, (L_start_actual + L_end_actual)/2 - 0.1),
+                xytext=(h_end_actual, (L_start_actual + L_end_actual)/2 + 0.1),
+                arrowprops=arrow_props)
+    ax.annotate('', xy=((h_start_actual + h_end_actual)/2 - 0.1, L_start_actual),
+                xytext=((h_start_actual + h_end_actual)/2 + 0.1, L_start_actual),
                 arrowprops=arrow_props)
 
     ax.set_xlabel(r'$|h|$')
@@ -531,10 +539,10 @@ if __name__ == "__main__":
     ax.set_xlim(hedges[0] - 0.02*h_span, hedges[-1] + 0.02*h_span)
     ax.set_ylim(Ledges[0] - 0.02*L_span, Ledges[-1] + 0.02*L_span)
 
-    # Show bootstrap result in legend title
-    circ_label = (r'$\Omega = {:+.3e}$'.format(circ_mean) + '\n'
-                  + r'$\pm {:.2e}$ ({:.1f}$\sigma$)'.format(circ_std, z_score))
-    ax.legend(loc='upper right', title=circ_label, title_fontsize=11)
+    # # Show bootstrap result in legend title
+    # circ_label = (r'$\Omega = {:+.3e}$'.format(circ_mean) + '\n'
+    #               + r'$\pm {:.2e}$ ({:.1f}$\sigma$)'.format(circ_std, z_score))
+    # ax.legend(loc='upper right', title=circ_label, title_fontsize=11)
 
     cax = fig.add_axes([0.75, 0.2, 0.03, 0.5])
     cb = plt.colorbar(im, cax=cax, orientation='vertical')
@@ -544,7 +552,7 @@ if __name__ == "__main__":
 
     plt.tight_layout()
     plt.savefig(
-        rf'bootstrapped_reduced_units_flux_magnitude_streamlines_bin_num={bin_num}'
+        rf'Blues_r_bootstrapped_reduced_units_flux_magnitude_streamlines_bin_num={bin_num}'
         rf'_taup={tau_p}_epsilon={epsilon}.svg'
     )
     plt.show()
