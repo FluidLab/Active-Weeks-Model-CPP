@@ -392,11 +392,11 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
 
     # Determine layout based on whether we're showing ridges
     if find_peaks_flag and peak_method == 'ridge' and show_ridges:
-        fig, axes = plt.subplots(1, 2, figsize=(12, 10))
+        fig, axes = plt.subplots(1, 2, figsize=(6, 5))
         ax_main = axes[0]
         ax_ridges = axes[1]
     else:
-        fig, ax_main = plt.subplots(figsize=(12, 10))
+        fig, ax_main = plt.subplots(figsize=(6, 5))
         ax_ridges = None
     
     # Plot main histogram
@@ -476,9 +476,9 @@ def plot_2d_histogram(histogram, h_edges, L_edges, title='2D Histogram (h, L)',
         for i, (h_p, L_p, val, _, _) in enumerate(peaks):
             # Use same distance threshold as C++ code: peak_distance_plot_thresh=0.05 was used in (h,L) space for large taup
             circle = plt.Circle((h_p, L_p), peak_distance_plot_thresh, fill=False, 
-                            edgecolor='lightblue', linewidth=3, zorder=10)
+                            edgecolor='lightblue', linewidth=2, zorder=10)
             ax_main.add_patch(circle)
-            ax_main.text(h_p + 0.05, L_p + 0.05, f'{i}', fontsize=14, 
+            ax_main.text(h_p + 0.05, L_p + 0.05, f'{i}', 
                         fontweight='bold', color='lightblue')
             
         # # For very low persistence time, truly 2 state system. Define the 1D basins at h=-2 and h=2, applying threshold = 1 from C++ simulations
@@ -803,7 +803,7 @@ if __name__ == "__main__":
         fig, ax, peaks = plot_2d_histogram(histogram, h_edges, L_edges, 
                          title='2D Histogram with Conditional Peak Detection: (h, L)',
                          log_scale=True,
-                         save_path=f'10_billion_timesteps_epsilon={epsilon}_taup={tau_p}_2D_histogram_hL_conditional.svg',
+                         save_path=f'SI_biggertext_10_billion_timesteps_epsilon={epsilon}_taup={tau_p}_2D_histogram_hL_conditional.svg',
                          find_peaks_flag=True,
                          peak_threshold=0.08,           # Global threshold (relative to global max value in a bin)
                          peak_method='conditional',     # Use conditional distribution method

@@ -55,7 +55,7 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
 
 /* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r to avoid overlaps */
 MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r_eff + epsilon; // Size of enclosure
+    double R = (N+epsilon)*r_eff; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -199,7 +199,7 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
     const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
-    const double R=(N*r_eff)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -259,7 +259,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
 // Calculate the total potential energy (sum of WCA potentials) stored in the current state
 double get_potential_energy(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center

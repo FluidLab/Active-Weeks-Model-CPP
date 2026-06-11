@@ -51,9 +51,9 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r to avoid overlaps */
+/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r_eff to avoid overlaps */
 MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r_eff + epsilon; // Size of enclosure
+    double R = (N+epsilon)*r_eff; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -210,7 +210,8 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -270,7 +271,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
 // Calculate the total potential energy (sum of WCA potentials) stored in the current state
 double get_potential_energy(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -590,7 +592,7 @@ int main() {
     const double int_strength = 40;
     const double T = 0.0; // thermal or athermal 0.0
     const double f = 1;
-    const std::string model_type = "AOUP"; // or "ABP"
+    const std::string model_type = "ABP"; // "AOUP" or "ABP"
     //Eigen::VectorXd active_f_vals = Eigen::VectorXd::LinSpaced(21, 0, 5); // For parallel calculations of dense active_f_values
     //const double tau_p = 1; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points

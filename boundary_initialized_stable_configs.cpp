@@ -65,7 +65,7 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
 }
 
 MatrixXd generate_boundary_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r_eff + epsilon; // Size of enclosure
+    double R = (N+epsilon)*r_eff; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
 
     double r_disk = r_eff / std::pow(2, 1.0/6.0); // actual disk radius
@@ -182,7 +182,8 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center

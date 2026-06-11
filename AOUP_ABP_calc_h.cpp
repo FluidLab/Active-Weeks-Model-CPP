@@ -51,9 +51,9 @@ bool check_wall_collision(const Vector2d& pos, double r, double R) {
     return pos.norm() >= (R - r);
 }
 
-/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r to avoid overlaps */
+/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r_eff to avoid overlaps */
 MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = N*r_eff + epsilon; // Size of enclosure
+    double R = (N+epsilon)*r_eff; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
     int max_attempts = 1000;
     int attempt = 0;
@@ -220,7 +220,8 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -280,7 +281,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
 // Calculate the total potential energy (sum of WCA potentials) stored in the current state
 double get_potential_energy(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double R=(N*sigma*std::pow(2,1.0/6.0)/2)+epsilon; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
+    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
     VectorXd r = (x.array().square()+y.array().square()).array().sqrt(); // vector of the radial distances for each disk from the center
@@ -537,16 +539,18 @@ int main() {
     // Simulation parameters
     const int N = 3;
     const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
-    //const double epsilon = 0.062; // uncomment for constant-epsilon sims
-    const std::vector<double> eps_vals = {0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10}; // uncomment for different values to run in parallel
+    const double epsilon = 0.01; // uncomment for constant-epsilon sims
+    //const std::vector<double> eps_vals = {0.043,0.062,1.1,1.6,10,14.8}; //{0.01,0.014,0.021,0.03,0.043,0.062,0.089}; //{0.13,0.18,0.26,0.38,0.55,0.78}; //{1.1,1.6,2.3,3.4,4.8,7,10,14.8}; // uncomment for different values to run in parallel
     const double v = 0.0;
     const double Tmax = (int)2e5; // Change depending on the epsilon value!
     const int nsamp = (int)2e9; // Change depending on the epsilon value!
-    const double int_strength = 40;
-    const double T = 0.0; // thermal or athermal 0.0
+    //const double int_strength = 40;
+    const std::vector<double> int_strength_vals = {40, 100, 200, 400}; // 10 logspaced points from 1 to 1000, uncomment for different values to run in parallel
+    const double T = 0.0; // thermal (typically 0.5) or athermal 0.0
     const double f = 1;
+    //const std::vector<double> f_vals = {0.5,1,2,3,5}; // uncomment for different values to run in parallel
     const std::string model_type = "ABP"; // "AOUP" or "ABP"
-    const double tau_p = 5; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
+    const double tau_p = 0.2; // persistence time. For Stokes-Einstein, tau_p = 1/(2*Dr)=pow(2*r*std::pow(2,1.0/6.0),2)/(6*T)
     //Eigen::VectorXd tau_p_vals = Eigen::VectorXd::LinSpaced(41, 0, 2); // For parallel calculations of dense tau_p values - for spacing of 0.05 between 0 and 2, you need (2 - 0)/0.05 + 1 = 41 points
     //const std::vector<double> tau_p_vals = {0.0002,1}; // uncomment for different values to run in parallel
     const int chunk_size = (int)5e7; // Process 50 million steps at a time
@@ -555,11 +559,12 @@ int main() {
 
     // Parallel execution of simulations - schedule(dynamic) automatically distributes across available cores
     #pragma omp parallel for schedule(dynamic)
-    for(size_t i = 0; i < eps_vals.size(); i++) {
+    for(size_t i = 0; i < int_strength_vals.size(); i++) {
         if (!had_error) {
             ThreadsafeRNG rng;
-            double epsilon = eps_vals[i];
-            const double D_f = std::pow(f,2) * 2 * tau_p / M_PI; //std::pow(f,2)/(3*tau_p); // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
+            //double f = f_vals[i];
+            double int_strength = int_strength_vals[i];
+            const double D_f = std::pow(f,2) * 2 * tau_p / M_PI; // Diffusion coefficient for AOUP propulsion noise chosen to give same stationary force magnitude as ABP
             
             #pragma omp critical
             {
@@ -570,9 +575,9 @@ int main() {
             try {
                 MatrixXd initial_state = generate_initial_state(N, r_eff, epsilon, v, rng);
                 
-                std::string dpath="Z:/Jared/Data/weeks_model_desktop/" + model_type + " caging time h trajectories, vary epsilon and taup/";
+                std::string dpath="Z:/Jared/Data/weeks_model_desktop/ABP particle softness testing 09-10-2025/";
                 std::stringstream filename;
-                filename << "h_trajectories_epsilon=" << epsilon << "_f=" << f << "_taup=" << tau_p << "_model=" << model_type << ".bin";
+                filename << "h_trajectories_epsilon=" << epsilon << "_int_strength=" << int_strength << "_f=" << f << "_taup=" << tau_p << "_model=" << model_type << ".bin";
                 std::string output_file = dpath + filename.str();
 
                 solve_RungeKutta_chunks(initial_state, Tmax, nsamp, epsilon, int_strength, 
