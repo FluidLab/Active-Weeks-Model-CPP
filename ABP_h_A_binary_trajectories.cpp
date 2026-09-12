@@ -15,6 +15,9 @@ using namespace Eigen;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
+/* 2^(1/6): the WCA cutoff expressed in units of sigma */
+static const double WCA_CUT = std::pow(2.0, 1.0/6.0);
+
 /////////////////////// Thread-safe random number generator class //////////////////////////////////
 class ThreadsafeRNG {
 private:
@@ -43,65 +46,59 @@ public:
     }
 };
 
-/////////////////////// Functions for defining the initial state ///////////////////////////////////
-bool check_disk_overlap(const Vector2d& pos1, const Vector2d& pos2, double r1, double r2) {
+/* Predicates for defining the initial state - rc is cutoff radius, i.e. effective hard disk radius */
+bool check_disk_overlap(const Vector2d& pos1, const Vector2d& pos2, double rc1, double rc2) {
     double dist = (pos1 - pos2).norm();
-    return dist <= (r1 + r2);
+    return dist <= (rc1 + rc2);
 }
 
-bool check_wall_collision(const Vector2d& pos, double r, double R) {
-    return pos.norm() >= (R - r);
+bool check_wall_collision(const Vector2d& pos, double rc, double R) {
+    return pos.norm() >= (R - rc);
 }
 
-/* Function to generate an initial configuration of disks. Make sure to put in the effective radius for r to avoid overlaps */
-MatrixXd generate_initial_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
-    double R = (N+epsilon)*r_eff; // Size of enclosure
-    MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
-    int max_attempts = 1000;
-    int attempt = 0;
+/* Function to generate an initial configuration of disks with U = 0: no pair within the WCA cutoff 2*r_eff,
+   no disk center within r_eff of the wall. r_eff is the per-disk cutoff radius. */
+MatrixXd generate_initial_state(int N, double r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
+    const double R = (N + epsilon) * r_eff; /* Enclosure radius */
+    const double a = r_eff / WCA_CUT; /* hard-core radius, stored in col 0 */
+    const double r_max = R - r_eff; /* Max distance from center of confinement for initialized disks */
     
-    while (attempt < max_attempts) {
+    if (r_max <= 0.0) throw std::invalid_argument("enclosure too small for one disk");
+    
+    MatrixXd state(N, 5); /* Format: [radius, x, y, vx, vy] */
+    const int max_attempts = 1000;
+
+    for (int attempt = 0; attempt < max_attempts; ++attempt) {
         bool valid_state = true;
         
         // Generate positions for all disks
         for (int i = 0; i < N; ++i) {
-            double r_pos = rng.uniform() * R;
-            double theta = 2 * M_PI *rng.uniform();
-            double v_direction = 2 * M_PI *rng.uniform();
+            const double r_pos = r_max * std::sqrt(rng.uniform()); /* sqrt samples with uniform density in area */
+            const double theta = 2 * M_PI *rng.uniform();
+            const double v_direction = 2 * M_PI *rng.uniform();
             
             // Set disk properties
-            state(i, 0) = r_eff/std::pow(2, 1.0/6.0); // actual disk radius is WCA effective radius divided by 2^(1/6)
+            state(i, 0) = a; // hard-core radius=sigma/2 for the potential
             state(i, 1) = r_pos * cos(theta); // x
             state(i, 2) = r_pos * sin(theta); // y
             state(i, 3) = v * cos(v_direction); // vx
             state(i, 4) = v * sin(v_direction); // vy
+
+            const Vector2d pos_i(state(i, 1), state(i, 2));
             
-            // Check overlap with previous disks
+            // Check for WCA overlap with previous disks
             for (int j = 0; j < i; ++j) {
-                Vector2d pos_i(state(i, 1), state(i, 2));
                 Vector2d pos_j(state(j, 1), state(j, 2));
-                if (check_disk_overlap(pos_i, pos_j, state(i, 0), state(j, 0))) {
+                if (check_disk_overlap(pos_i, pos_j, r_eff, r_eff)) {
                     valid_state = false;
                     break;
                 }
             }
-            
-            // Check wall collision
-            if (valid_state) {
-                Vector2d pos_i(state(i, 1), state(i, 2));
-                if (check_wall_collision(pos_i, state(i, 0), R)) {
-                    valid_state = false;
-                }
-            }
-            
+                        
             if (!valid_state) break;
         }
         
-        if (valid_state) {
-            return state;
-        }
-        
-        attempt++;
+        if (valid_state) return state;
     }
     
     throw std::runtime_error("Failed to generate valid initial state after maximum attempts");
@@ -198,7 +195,7 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double r_eff = sigma*WCA_CUT/2;
     const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
@@ -232,7 +229,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         double sum_grad_Ux=0;
         double sum_grad_Uy=0;
         for (size_t disk_j=0; disk_j < N; ++disk_j) {
-            if (!((disk_j==disk_i) || (distances(disk_i,disk_j)/sigma)>std::pow(2,1.0/6.0))) {
+            if (!((disk_j==disk_i) || (distances(disk_i,disk_j)/sigma)>WCA_CUT)) {
                 // no contribution to the force for self-interactions, or if the disks are outside range of the WCA potential
                 sum_grad_Ux += -4*int_strength*(-(12/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),12) \
                 +(6/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),6))*((x(disk_j)-x(disk_i))/distances(disk_i,disk_j)); // minus sign out front is because my gradient calculates force FROM disk_i TO disk_j, and I need to add opposite
@@ -242,7 +239,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         }
 
         //now add the force produced by the wall
-        if (!((wall_dist(disk_i)/sigma)>std::pow(2,1.0/6.0))) {
+        if (!((wall_dist(disk_i)/sigma)>WCA_CUT)) {
             double wall_xdist = (r_eff+R)*x(disk_i)/r(disk_i);
             double wall_ydist = (r_eff+R)*y(disk_i)/r(disk_i);
             sum_grad_Ux += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
@@ -259,7 +256,7 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
 // Calculate the total potential energy (sum of WCA potentials) stored in the current state
 double get_potential_energy(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double r_eff = sigma*WCA_CUT/2;
     const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
@@ -275,7 +272,7 @@ double get_potential_energy(MatrixXd current_state, double epsilon, double int_s
                                    std::pow((y(disk_i) - y(disk_j)), 2));
                                    
             // Apply WCA potential if disks are within range
-            if (r_ij <= sigma * std::pow(2, 1.0/6.0)) {
+            if (r_ij <= sigma * WCA_CUT) {
                 double energy_ij = 4 * int_strength * (std::pow((sigma / r_ij), 12) - 
                                                         std::pow((sigma / r_ij), 6)) + 
                                   int_strength;
@@ -285,8 +282,8 @@ double get_potential_energy(MatrixXd current_state, double epsilon, double int_s
         
         // Calculate disk-wall interaction energy
         // each disk's nearest distance to the enclosure potential is r_eff+R-r
-        double dist_to_wall = sigma * std::pow(2, 1.0/6.0) / 2 + R - r(disk_i);
-        if (dist_to_wall <= sigma * std::pow(2, 1.0/6.0)) {
+        double dist_to_wall = r_eff + R - r(disk_i);
+        if (dist_to_wall <= sigma * WCA_CUT) {
             double energy_wall = 4 * int_strength * (std::pow((sigma / dist_to_wall), 12) - 
                                                      std::pow((sigma / dist_to_wall), 6)) + 
                                int_strength;
@@ -485,7 +482,7 @@ void solve_RungeKutta_chunks(MatrixXd X, double Tmax, int nsamp, double epsilon,
 int main() {
     // Simulation parameters
     const int N = 3;
-    const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
+    const double r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     const double epsilon = 0.25;
     const double v = 0.0;
     const double Tmax = (int)2e5;

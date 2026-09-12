@@ -15,6 +15,9 @@ using namespace Eigen;
 using Eigen::MatrixXd;
 using Eigen::VectorXd;
 
+/* 2^(1/6): the WCA cutoff expressed in units of sigma */
+static const double WCA_CUT = std::pow(2.0, 1.0/6.0);
+
 std::string formatted_string(double value, int precision) {
     std::ostringstream oss;
     oss << std::fixed << std::setprecision(precision) << value;
@@ -54,21 +57,21 @@ public:
     }
 };
 
-/////////////////////// Functions for defining the initial state ///////////////////////////////////
-bool check_disk_overlap(const Vector2d& pos1, const Vector2d& pos2, double r1, double r2) {
+/* Predicates for defining the initial state - rc is cutoff radius, i.e. effective hard disk radius */
+bool check_disk_overlap(const Vector2d& pos1, const Vector2d& pos2, double rc1, double rc2) {
     double dist = (pos1 - pos2).norm();
-    return dist <= (r1 + r2);
+    return dist <= (rc1 + rc2);
 }
 
-bool check_wall_collision(const Vector2d& pos, double r, double R) {
-    return pos.norm() >= (R - r);
+bool check_wall_collision(const Vector2d& pos, double rc, double R) {
+    return pos.norm() >= (R - rc);
 }
 
 MatrixXd generate_boundary_state(int N, int r_eff, double epsilon, double v, ThreadsafeRNG& rng) {
     double R = (N+epsilon)*r_eff; // Size of enclosure
     MatrixXd state(N, 5); // Format: [radius, x, y, vx, vy]
 
-    double r_disk = r_eff / std::pow(2, 1.0/6.0); // actual disk radius
+    double r_disk = r_eff / WCA_CUT; // actual disk radius
     double r_pos = R - r_eff; // fixed radial position on boundary
 
     // Check if it's even possible to fit N disks on the boundary
@@ -182,7 +185,7 @@ double calculate_h(const MatrixXd& positions, int hopping_disk_id = 2) {
 ////////////////////// Functions for solving the Langevin dynamics of the disks ///////////////////////////////////
 MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_strength, double sigma) {
     const int N = current_state.rows();
-    const double r_eff = sigma*std::pow(2,1.0/6.0)/2;
+    const double r_eff = sigma*WCA_CUT/2;
     const double R=(N+epsilon)*r_eff; // R should be the number of disks plus epsilon, if each disk's effective radius (current_state(0,0)*2^(1/6)) is 1
     VectorXd x = current_state.col(0);
     VectorXd y = current_state.col(1);
@@ -195,8 +198,8 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         //populate (i,i) elements with zeros (distance from disk to itself is zero)
         distances(i,i) = 0;
 
-        // each disk's nearest distance to the extent of the potential from the wall is r_eff+R-r
-        wall_dist(i) = sigma * std::pow(2,1.0/6.0) / 2 + R - r(i);
+        // each disk's nearest distance to the extent of the potential felt by the wall is r_eff+R-r
+        wall_dist(i) = r_eff + R - r(i);
     }
 
     // loop over all unique disk pairs
@@ -210,13 +213,13 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         }
     }
 
-    // calculate x and y values of the force produced by the various WCA potentials, scaled by kT
+    // calculate x and y values of the force produced by the various WCA potentials
     MatrixXd forces(N,2); 
     for (size_t disk_i=0; disk_i < N; ++disk_i){
         double sum_grad_Ux=0;
         double sum_grad_Uy=0;
         for (size_t disk_j=0; disk_j < N; ++disk_j) {
-            if (!((disk_j==disk_i) || (distances(disk_i,disk_j)/sigma)>std::pow(2,1.0/6.0))) {
+            if (!((disk_j==disk_i) || (distances(disk_i,disk_j)/sigma)>WCA_CUT)) {
                 // no contribution to the force for self-interactions, or if the disks are outside range of the WCA potential
                 sum_grad_Ux += -4*int_strength*(-(12/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),12) \
                 +(6/distances(disk_i,disk_j))*std::pow((sigma/distances(disk_i,disk_j)),6))*((x(disk_j)-x(disk_i))/distances(disk_i,disk_j)); // minus sign out front is because my gradient calculates force FROM disk_i TO disk_j, and I need to add opposite
@@ -226,9 +229,9 @@ MatrixXd get_WCA_force(MatrixXd current_state, double epsilon, double int_streng
         }
 
         //now add the force produced by the wall
-        if (!((wall_dist(disk_i)/sigma)>std::pow(2,1.0/6.0))) {
-            double wall_xdist = (sigma*std::pow(2,1.0/6.0)/2+R)*x(disk_i)/r(disk_i);
-            double wall_ydist = (sigma*std::pow(2,1.0/6.0)/2+R)*y(disk_i)/r(disk_i);
+        if (!((wall_dist(disk_i)/sigma)>WCA_CUT)) {
+            double wall_xdist = (r_eff+R)*x(disk_i)/r(disk_i);
+            double wall_ydist = (r_eff+R)*y(disk_i)/r(disk_i);
             sum_grad_Ux += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
             +(6/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),6))*((wall_xdist-x(disk_i))/wall_dist(disk_i)); // minus sign out front is because my gradient calculates force FROM disk_i TO wall
             sum_grad_Uy += -4*int_strength*(-(12/wall_dist(disk_i))*std::pow((sigma/wall_dist(disk_i)),12) \
@@ -612,7 +615,7 @@ void explore_phase_space(int N, double epsilon, int r_eff, double Tmax, double d
 int main() {
     /* Simulation parameters */
     const int N = 3; /* Code as currently written WON'T WORK if disk number is not 3, could be easily adapted though */
-    const int r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
+    const double r_eff = 1; /* effective radius from WCA potential (kicks in at separation of 2^(1/6)), actual disk radius is r_eff/2^(1/6) */
     const std::vector<double> eps_vals = {0.25, 1}; // {0.001, 0.005, 0.01, 0.1, 0.25, 0.6, 1, 5, 10}
     const double Tmax = 1000; // was 100
     const double dt = 1e-4; // simulation step size
